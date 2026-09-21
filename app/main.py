@@ -127,6 +127,17 @@ def init_db():
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS fuel_entries (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+          fill_date TEXT NOT NULL,
+          odometer INTEGER NOT NULL DEFAULT 0 CHECK(odometer >= 0),
+          gallons REAL NOT NULL CHECK(gallons > 0),
+          cost REAL NOT NULL DEFAULT 0 CHECK(cost >= 0),
+          logged_by INTEGER NOT NULL REFERENCES users(id),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS reminders (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
@@ -221,6 +232,13 @@ class ServiceIn(BaseModel):
     cost: float = Field(default=0, ge=0)
     provider: str = Field(default="", max_length=100)
     notes: str = Field(default="", max_length=1000)
+
+class FuelIn(BaseModel):
+    vehicle_id: int
+    date: str
+    odometer: int = Field(ge=0)
+    gallons: float = Field(gt=0)
+    cost: float = Field(default=0, ge=0)
 
 class ReminderIn(BaseModel):
     vehicle_id: int
@@ -374,6 +392,60 @@ def delete_service(item_id:int,request:Request):
         if not c.execute("DELETE FROM services WHERE id=?",(item_id,)).rowcount: raise HTTPException(404,"Service not found")
     return {"ok":True}
 
+def fuel_rows(c, vehicle_id: int | None = None) -> list[dict[str, Any]]:
+    rows = c.execute("SELECT * FROM fuel_entries WHERE (? IS NULL OR vehicle_id=?) ORDER BY fill_date,id", (vehicle_id, vehicle_id)).fetchall()
+    out: list[dict[str, Any]] = []
+    prev: sqlite3.Row | None = None
+    for r in rows:
+        mpg = None
+        if prev is not None and r["odometer"] > prev["odometer"]:
+            mpg = (r["odometer"] - prev["odometer"]) / r["gallons"]
+        out.append({"id": r["id"], "vehicle_id": r["vehicle_id"], "date": r["fill_date"], "odometer": r["odometer"],
+                    "gallons": r["gallons"], "cost": r["cost"], "mpg": mpg,
+                    "logged_by": display_user(c, r["logged_by"]), "created_at": r["created_at"], "updated_at": r["updated_at"]})
+        prev = r
+    out.reverse()
+    return out
+
+def one_fuel(c, item_id: int) -> dict[str, Any]:
+    row = c.execute("SELECT * FROM fuel_entries WHERE id=?", (item_id,)).fetchone()
+    return next(r for r in fuel_rows(c, row["vehicle_id"]) if r["id"] == item_id)
+
+@app.get("/api/fuel")
+def list_fuel(request: Request, vehicle_id: int | None = None):
+    current_user(request)
+    with db() as c:
+        return fuel_rows(c, vehicle_id)
+
+@app.post("/api/fuel")
+def add_fuel(body: FuelIn, request: Request):
+    user = current_user(request); stamp = now_iso()
+    with db() as c:
+        if not c.execute("SELECT 1 FROM vehicles WHERE id=?", (body.vehicle_id,)).fetchone():
+            raise HTTPException(404, "Vehicle not found")
+        cur = c.execute("INSERT INTO fuel_entries(vehicle_id,fill_date,odometer,gallons,cost,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                        (body.vehicle_id, body.date, body.odometer, body.gallons, body.cost, user["id"], stamp, stamp))
+        c.execute("UPDATE vehicles SET mileage=MAX(mileage,?),updated_at=? WHERE id=?", (body.odometer, stamp, body.vehicle_id))
+        return one_fuel(c, cur.lastrowid)
+
+@app.put("/api/fuel/{item_id}")
+def update_fuel(item_id: int, body: FuelIn, request: Request):
+    current_user(request)
+    with db() as c:
+        cur = c.execute("UPDATE fuel_entries SET vehicle_id=?,fill_date=?,odometer=?,gallons=?,cost=?,updated_at=? WHERE id=?",
+                        (body.vehicle_id, body.date, body.odometer, body.gallons, body.cost, now_iso(), item_id))
+        if not cur.rowcount:
+            raise HTTPException(404, "Fill-up not found")
+        return one_fuel(c, item_id)
+
+@app.delete("/api/fuel/{item_id}")
+def delete_fuel(item_id: int, request: Request):
+    current_user(request)
+    with db() as c:
+        if not c.execute("DELETE FROM fuel_entries WHERE id=?", (item_id,)).rowcount:
+            raise HTTPException(404, "Fill-up not found")
+    return {"ok": True}
+
 def reminder_dict(row):
     return {"id":row["id"],"vehicle_id":row["vehicle_id"],"name":row["name"],"miles_interval":row["miles_interval"],
             "months_interval":row["months_interval"],"last_date":row["last_date"],"last_mileage":row["last_mileage"]}
@@ -471,17 +543,18 @@ def export_data(request:Request):
     with db() as c:
         data={"version":2,"exported_at":now_iso(),"vehicles":[vehicle_dict(c,r) for r in c.execute("SELECT * FROM vehicles")],
               "services":[service_dict(c,r) for r in c.execute("SELECT * FROM services")],
-              "reminders":[reminder_dict(r) for r in c.execute("SELECT * FROM reminders")]}
+              "reminders":[reminder_dict(r) for r in c.execute("SELECT * FROM reminders")],
+              "fuel":[r for r in fuel_rows(c)]}
     return data
 
 @app.post("/api/import")
 def import_data(payload:dict[str,Any],request:Request):
     user=current_user(request)
-    vehicles=payload.get("vehicles",[]); services=payload.get("services",[]); reminders=payload.get("reminders",[])
-    if not isinstance(vehicles,list) or not isinstance(services,list) or not isinstance(reminders,list): raise HTTPException(400,"Invalid JSON backup")
+    vehicles=payload.get("vehicles",[]); services=payload.get("services",[]); reminders=payload.get("reminders",[]); fuel=payload.get("fuel",[])
+    if not isinstance(vehicles,list) or not isinstance(services,list) or not isinstance(reminders,list) or not isinstance(fuel,list): raise HTTPException(400,"Invalid JSON backup")
     stamp=now_iso(); idmap={}
     with db() as c:
-        c.execute("DELETE FROM services");c.execute("DELETE FROM reminders");c.execute("DELETE FROM vehicles")
+        c.execute("DELETE FROM services");c.execute("DELETE FROM reminders");c.execute("DELETE FROM fuel_entries");c.execute("DELETE FROM vehicles")
         for v in vehicles:
             cur=c.execute("INSERT INTO vehicles(name,year,mileage,icon,added_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
               (str(v.get("name","Vehicle"))[:80],str(v.get("year",""))[:4],max(0,int(v.get("mileage",0))),str(v.get("icon","🚗"))[:8],user["id"],stamp,stamp));idmap[str(v.get("id"))]=cur.lastrowid
@@ -490,6 +563,11 @@ def import_data(payload:dict[str,Any],request:Request):
             if not vid: continue
             c.execute("""INSERT INTO services(vehicle_id,service_date,mileage,service_type,cost,provider,notes,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)""",
               (vid,str(s.get("date",""))[:10],max(0,int(s.get("mileage",0))),str(s.get("type","Service"))[:100],max(0,float(s.get("cost",0))),str(s.get("provider",s.get("who","")))[:100],str(s.get("notes",""))[:1000],user["id"],stamp,stamp))
+        for f in fuel:
+            vid=idmap.get(str(f.get("vehicle_id",f.get("vehicleId"))))
+            if not vid: continue
+            c.execute("""INSERT INTO fuel_entries(vehicle_id,fill_date,odometer,gallons,cost,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)""",
+              (vid,str(f.get("date",""))[:10],max(0,int(f.get("odometer",0))),max(0.001,float(f.get("gallons",1))),max(0,float(f.get("cost",0))),user["id"],stamp,stamp))
         for r in reminders:
             vid=idmap.get(str(r.get("vehicle_id",r.get("vehicleId")))); 
             if not vid: continue

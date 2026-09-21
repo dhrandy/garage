@@ -22,6 +22,10 @@ Administrators can open **Settings** to rename the garage. The name is stored in
 
 Settings also has **Vehicle page sections** checkboxes to hide the Service log, Maintenance, Fuel, and Costs sections. Hidden sections disappear from every vehicle page for all users. The choices are stored in SQLite and apply to everyone, including non-administrators.
 
+## Fuel log
+
+Each vehicle has a **Fuel** tab for fill-ups: date, odometer, gallons, and total cost. MPG is computed automatically between consecutive fill-ups, and the tab shows the running average MPG and fuel cost per mile. Logging a fill-up also raises the vehicle's recorded mileage when the odometer reading is higher. Fuel entries are included in JSON exports and imports.
+
 ## Users
 
 Administrators can open **Users** from the top bar to create users, change usernames, reset passwords, grant or remove administrator access, and deactivate accounts. All active users see the same garage. Every vehicle and service entry records the user who added or logged it. Non-administrators can manage vehicles, services, mileage, and reminders, but cannot manage users.
@@ -92,6 +96,7 @@ The browser uses a JSON REST API under `/api`. Authentication is cookie-based.
 - `POST /api/login`, `POST /api/logout`, `GET /api/me`
 - `GET/POST /api/vehicles`, `PUT/DELETE /api/vehicles/{id}`
 - `GET/POST /api/services`, `PUT/DELETE /api/services/{id}`
+- `GET/POST /api/fuel`, `PUT/DELETE /api/fuel/{id}`
 - `GET/POST /api/reminders`, `PUT/DELETE /api/reminders/{id}`
 - `GET /api/export`, `POST /api/import`
 - `GET/PUT /api/settings` (`PUT` is administrator only)
