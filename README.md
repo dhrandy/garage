@@ -14,7 +14,7 @@ Garage is a self-hosted, multi-user vehicle maintenance tracker. One shared gara
 3. Open `http://your-server:8917`.
 4. The first visit shows setup. Create the first account, which becomes the administrator.
 
-Fresh installs include four vehicles: 2021 Ford F-150, 2006 Mazda Miata, 2023 Hyundai Tucson, and Chevrolet Traverse. You can edit or remove them.
+Fresh installs start with an empty garage. Add your own vehicles from the app to begin tracking them.
 
 ## Users
 
