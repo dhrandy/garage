@@ -42,3 +42,18 @@ def test_security_headers_and_login_rate_limit(tmp_path):
         assert response.status_code == 429
         assert int(response.headers['retry-after']) > 0
         assert response.json()['detail'] == 'Too many login attempts. Try again later.'
+
+
+def test_admin_can_rename_garage_and_member_cannot(tmp_path):
+    main.DB_PATH = tmp_path / 'settings.db'
+    main._login_failures.clear()
+    main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup', json={'username':'admin-test','password':'password-123'})
+        assert admin.get('/api/settings').json() == {'garage_name':'Your Garage'}
+        assert admin.put('/api/settings', json={'garage_name':'Randy Garage'}).json() == {'garage_name':'Randy Garage'}
+        admin.post('/api/users', json={'username':'member-test','password':'password-456','is_admin':False})
+    with TestClient(main.app) as member:
+        member.post('/api/login', json={'username':'member-test','password':'password-456'})
+        assert member.get('/api/settings').json() == {'garage_name':'Randy Garage'}
+        assert member.put('/api/settings', json={'garage_name':'Nope'}).status_code == 403
