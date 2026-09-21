@@ -1,6 +1,8 @@
 # Garage
 
-Garage is a self-hosted, multi-user vehicle maintenance tracker. One shared garage keeps vehicle mileage, service history, maintenance reminders, and costs in sync across phones and computers. It runs as one Docker container with SQLite storage.
+![Garage logo](app/static/logo-512.png)
+
+Garage is a simple vehicle maintenance tracker. It is self-hosted and multi-user. One shared garage keeps vehicle mileage, service history, maintenance reminders, and costs in sync across phones and computers. It runs as one Docker container with SQLite storage.
 
 ## Quick start
 
@@ -15,6 +17,10 @@ Garage is a self-hosted, multi-user vehicle maintenance tracker. One shared gara
 4. The first visit shows setup. Create the first account, which becomes the administrator.
 
 Fresh installs start with one example vehicle, a 1969 Mustang, that you can edit or delete.
+
+## Settings
+
+Administrators can open **Settings** to rename the garage. The name is stored in SQLite and appears in the header and on the garage home screen. New installs default to **Your Garage**.
 
 ## Users
 
@@ -74,6 +80,10 @@ docker run -d --name garage -p 8917:8000 \
 
 Passwords use PBKDF2-HMAC-SHA256 with a unique random salt and 260,000 iterations. Login state uses random, server-stored session tokens in an HTTP-only, SameSite cookie. Set `GARAGE_COOKIE_SECURE=true` when Garage is served through HTTPS. The setup route closes automatically after the first account is created.
 
+## License
+
+Garage is available under the [MIT License](LICENSE).
+
 ## API
 
 The browser uses a JSON REST API under `/api`. Authentication is cookie-based.
@@ -84,4 +94,5 @@ The browser uses a JSON REST API under `/api`. Authentication is cookie-based.
 - `GET/POST /api/services`, `PUT/DELETE /api/services/{id}`
 - `GET/POST /api/reminders`, `PUT/DELETE /api/reminders/{id}`
 - `GET /api/export`, `POST /api/import`
+- `GET/PUT /api/settings` (`PUT` is administrator only)
 - `GET/POST /api/users`, `PUT /api/users/{id}` (administrator only)
