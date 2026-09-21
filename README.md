@@ -14,7 +14,7 @@ Garage is a self-hosted, multi-user vehicle maintenance tracker. One shared gara
 3. Open `http://your-server:8917`.
 4. The first visit shows setup. Create the first account, which becomes the administrator.
 
-Fresh installs start with an empty garage. Add your own vehicles from the app to begin tracking them.
+Fresh installs start with one example vehicle, a 1969 Mustang, that you can edit or delete.
 
 ## Users
 
@@ -45,6 +45,20 @@ For a consistent backup, stop the container, copy `garage.db`, then start it aga
 2. Add `GARAGE_SECRET` in Dockhand's Environment tab. No `.env` file is required. Plain Docker Compose users can use a `.env` file beside the Compose file instead.
 3. Deploy the stack.
 4. Open port `8917` on the CasaOS host and complete first-run setup.
+
+## Synology reverse proxy
+
+Garage can sit behind Synology DSM's reverse proxy. Create an HTTPS reverse-proxy rule whose destination is `http://<garage-host>:8917`, enable WebSocket forwarding, and forward the original `Host`, `X-Forwarded-For`, and `X-Forwarded-Proto` headers. Set `GARAGE_COOKIE_SECURE=true` so session cookies are only sent over HTTPS.
+
+Uvicorn honors forwarded headers only from trusted proxy addresses. Set `FORWARDED_ALLOW_IPS` to the Synology proxy's IP address (or a narrow trusted CIDR), for example:
+
+```yaml
+environment:
+  - GARAGE_COOKIE_SECURE=true
+  - FORWARDED_ALLOW_IPS=192.168.1.10
+```
+
+Do not use `FORWARDED_ALLOW_IPS=*` when port `8917` is reachable by untrusted clients. Keep the SQLite data directory outside any reverse-proxy static-file root.
 
 The Compose file pulls `ghcr.io/dhrandy/garage:latest`. To build locally instead, run:
 
