@@ -20,6 +20,8 @@ Fresh installs start with one example vehicle, a 1969 Mustang, that you can edit
 
 Administrators can open **Settings** to rename the garage. The name is stored in SQLite and appears in the header and on the garage home screen. New installs default to **Your Garage**.
 
+Settings also has **Vehicle page sections** checkboxes to hide the Service log, Maintenance, Fuel, and Costs sections. Hidden sections disappear from every vehicle page for all users. The choices are stored in SQLite and apply to everyone, including non-administrators.
+
 ## Users
 
 Administrators can open **Users** from the top bar to create users, change usernames, reset passwords, grant or remove administrator access, and deactivate accounts. All active users see the same garage. Every vehicle and service entry records the user who added or logged it. Non-administrators can manage vehicles, services, mileage, and reminders, but cannot manage users.

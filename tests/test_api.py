@@ -50,10 +50,28 @@ def test_admin_can_rename_garage_and_member_cannot(tmp_path):
     main.init_db()
     with TestClient(main.app) as admin:
         admin.post('/api/setup', json={'username':'admin-test','password':'password-123'})
-        assert admin.get('/api/settings').json() == {'garage_name':'Your Garage'}
-        assert admin.put('/api/settings', json={'garage_name':'Randy Garage'}).json() == {'garage_name':'Randy Garage'}
+        assert admin.get('/api/settings').json() == {'garage_name':'Your Garage','hide_service_log':False,'hide_maintenance':False,'hide_costs':False,'hide_fuel':False}
+        assert admin.put('/api/settings', json={'garage_name':'Test Garage'}).json()['garage_name'] == 'Test Garage'
         admin.post('/api/users', json={'username':'member-test','password':'password-456','is_admin':False})
     with TestClient(main.app) as member:
         member.post('/api/login', json={'username':'member-test','password':'password-456'})
-        assert member.get('/api/settings').json() == {'garage_name':'Randy Garage'}
+        assert member.get('/api/settings').json()['garage_name'] == 'Test Garage'
         assert member.put('/api/settings', json={'garage_name':'Nope'}).status_code == 403
+
+
+def test_admin_can_hide_vehicle_sections(tmp_path):
+    main.DB_PATH = tmp_path / 'sections.db'
+    main._login_failures.clear()
+    main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup', json={'username':'admin-test','password':'password-123'})
+        result = admin.put('/api/settings', json={'hide_fuel':True,'hide_costs':True}).json()
+        assert result['hide_fuel'] is True and result['hide_costs'] is True
+        assert result['hide_service_log'] is False and result['hide_maintenance'] is False
+        assert result['garage_name'] == 'Your Garage'
+        admin.post('/api/users', json={'username':'member-test','password':'password-456','is_admin':False})
+    with TestClient(main.app) as member:
+        member.post('/api/login', json={'username':'member-test','password':'password-456'})
+        settings = member.get('/api/settings').json()
+        assert settings['hide_fuel'] is True and settings['hide_costs'] is True
+        assert member.put('/api/settings', json={'hide_fuel':False}).status_code == 403

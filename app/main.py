@@ -140,6 +140,8 @@ def init_db():
         );
         """)
         c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", ("garage_name", "Your Garage"))
+        for key in SETTINGS_KEYS[1:]:
+            c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (key, "0"))
         if fresh_install:
             stamp = now_iso()
             c.execute(
@@ -228,8 +230,21 @@ class ReminderIn(BaseModel):
     last_date: str
     last_mileage: int = Field(default=0, ge=0)
 
+SETTINGS_KEYS = ("garage_name", "hide_service_log", "hide_maintenance", "hide_costs", "hide_fuel")
+
+def read_settings(c) -> dict[str, Any]:
+    data = {r["key"]: r["value"] for r in c.execute("SELECT key,value FROM settings")}
+    out: dict[str, Any] = {"garage_name": data.get("garage_name", "Your Garage")}
+    for key in SETTINGS_KEYS[1:]:
+        out[key] = data.get(key, "0") == "1"
+    return out
+
 class SettingsIn(BaseModel):
-    garage_name: str = Field(min_length=1, max_length=80)
+    garage_name: str | None = Field(default=None, max_length=80)
+    hide_service_log: bool | None = None
+    hide_maintenance: bool | None = None
+    hide_costs: bool | None = None
+    hide_fuel: bool | None = None
 
 class UserCreate(BaseModel):
     username: str
@@ -401,18 +416,22 @@ def delete_reminder(item_id:int,request:Request):
 def get_settings(request: Request):
     current_user(request)
     with db() as c:
-        row = c.execute("SELECT value FROM settings WHERE key='garage_name'").fetchone()
-    return {"garage_name": row[0] if row else "Your Garage"}
+        return read_settings(c)
 
 @app.put("/api/settings")
 def update_settings(body: SettingsIn, request: Request):
     current_user(request, True)
-    name = body.garage_name.strip()
-    if not name:
-        raise HTTPException(400, "Garage name is required")
     with db() as c:
-        c.execute("INSERT INTO settings(key,value) VALUES('garage_name',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (name,))
-    return {"garage_name": name}
+        if body.garage_name is not None:
+            name = body.garage_name.strip()
+            if not name:
+                raise HTTPException(400, "Garage name is required")
+            c.execute("INSERT INTO settings(key,value) VALUES('garage_name',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (name,))
+        for key in SETTINGS_KEYS[1:]:
+            value = getattr(body, key)
+            if value is not None:
+                c.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, "1" if value else "0"))
+        return read_settings(c)
 
 @app.get("/api/users")
 def list_users(request:Request):
