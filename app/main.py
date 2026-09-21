@@ -202,6 +202,13 @@ def init_db():
           uploaded_by INTEGER REFERENCES users(id),
           created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS mileage_updates (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+          mileage INTEGER NOT NULL CHECK(mileage >= 0),
+          recorded_by INTEGER REFERENCES users(id),
+          recorded_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS reminders (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
@@ -280,7 +287,7 @@ def set_session(response: Response, user_id: int):
 
 def display_user(c: sqlite3.Connection, user_id: int | None) -> str:
     if user_id is None:
-        return "System"
+        return ""
     row = c.execute("SELECT username FROM users WHERE id=?", (user_id,)).fetchone()
     return row[0] if row else "Former user"
 
@@ -422,7 +429,9 @@ def vehicle_dict(c, row):
     return {"id":row["id"],"name":row["name"],"year":row["year"],"mileage":row["mileage"],"icon":row["icon"],
             "est_mileage":est["est_mileage"],"miles_per_day":est["miles_per_day"],"photo_receipt_id":row["photo_receipt_id"],
             "photo_url":f"/api/receipts/{row['photo_receipt_id']}" if row["photo_receipt_id"] else None,
-            "added_by":display_user(c,row["added_by"]),"created_at":row["created_at"],"updated_at":row["updated_at"]}
+            "added_by":display_user(c,row["added_by"]) or "System",
+            "mileage_updated_by": (lambda r: display_user(c, r["recorded_by"]) if r else "")(c.execute("SELECT recorded_by FROM mileage_updates WHERE vehicle_id=? ORDER BY id DESC LIMIT 1", (row["id"],)).fetchone()),
+            "created_at":row["created_at"],"updated_at":row["updated_at"]}
 
 @app.get("/api/vehicles")
 def list_vehicles(request: Request):
@@ -439,10 +448,15 @@ def add_vehicle(body: VehicleIn, request: Request):
 
 @app.put("/api/vehicles/{item_id}")
 def update_vehicle(item_id:int, body:VehicleIn, request:Request):
-    current_user(request)
+    user=current_user(request); stamp=now_iso()
     with db() as c:
+        old=c.execute("SELECT mileage FROM vehicles WHERE id=?",(item_id,)).fetchone()
+        if not old: raise HTTPException(404,"Vehicle not found")
         cur=c.execute("UPDATE vehicles SET name=?,year=?,mileage=?,icon=?,updated_at=? WHERE id=?",
-                      (body.name.strip(),body.year.strip(),body.mileage,body.icon,now_iso(),item_id))
+                      (body.name.strip(),body.year.strip(),body.mileage,body.icon,stamp,item_id))
+        if body.mileage != old["mileage"]:
+            c.execute("INSERT INTO mileage_updates(vehicle_id,mileage,recorded_by,recorded_at) VALUES(?,?,?,?)",
+                      (item_id,body.mileage,user["id"],stamp))
         if not cur.rowcount: raise HTTPException(404,"Vehicle not found")
         return vehicle_dict(c,c.execute("SELECT * FROM vehicles WHERE id=?",(item_id,)).fetchone())
 
@@ -485,6 +499,13 @@ def delete_vehicle(item_id:int, request:Request):
         if not c.execute("DELETE FROM vehicles WHERE id=?",(item_id,)).rowcount: raise HTTPException(404,"Vehicle not found")
     return {"ok":True}
 
+def update_vehicle_mileage(c, vehicle_id: int, mileage: int, user_id: int | None, stamp: str) -> None:
+    row = c.execute("SELECT mileage FROM vehicles WHERE id=?", (vehicle_id,)).fetchone()
+    if row and mileage > row["mileage"]:
+        c.execute("UPDATE vehicles SET mileage=?,updated_at=? WHERE id=?", (mileage, stamp, vehicle_id))
+        c.execute("INSERT INTO mileage_updates(vehicle_id,mileage,recorded_by,recorded_at) VALUES(?,?,?,?)",
+                  (vehicle_id, mileage, user_id, stamp))
+
 def apply_reminder_reset(c, vehicle_id: int, reminder_id: int | None, service_date: str, mileage: int) -> None:
     if reminder_id is None:
         return
@@ -513,7 +534,7 @@ def add_service(body:ServiceIn, request:Request):
         apply_reminder_reset(c, body.vehicle_id, body.reminder_id, body.date, body.mileage)
         cur=c.execute("""INSERT INTO services(vehicle_id,service_date,mileage,service_type,cost,provider,notes,logged_by,reminder_id,created_at,updated_at)
           VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(body.vehicle_id,body.date,body.mileage,body.type.strip(),body.cost,body.provider.strip(),body.notes.strip(),user["id"],body.reminder_id,stamp,stamp))
-        c.execute("UPDATE vehicles SET mileage=MAX(mileage,?),updated_at=? WHERE id=?",(body.mileage,stamp,body.vehicle_id))
+        update_vehicle_mileage(c, body.vehicle_id, body.mileage, user["id"], stamp)
         return service_dict(c,c.execute("SELECT * FROM services WHERE id=?",(cur.lastrowid,)).fetchone())
 
 @app.put("/api/services/{item_id}")
@@ -567,7 +588,7 @@ def add_fuel(body: FuelIn, request: Request):
             raise HTTPException(404, "Vehicle not found")
         cur = c.execute("INSERT INTO fuel_entries(vehicle_id,fill_date,odometer,gallons,cost,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
                         (body.vehicle_id, body.date, body.odometer, body.gallons, body.cost, user["id"], stamp, stamp))
-        c.execute("UPDATE vehicles SET mileage=MAX(mileage,?),updated_at=? WHERE id=?", (body.odometer, stamp, body.vehicle_id))
+        update_vehicle_mileage(c, body.vehicle_id, body.odometer, user["id"], stamp)
         return one_fuel(c, cur.lastrowid)
 
 @app.put("/api/fuel/{item_id}")
@@ -920,7 +941,7 @@ def v1_add_service(vehicle_id: int, body: ServiceV1In, request: Request):
         apply_reminder_reset(c, vehicle_id, body.reminder_id, body.date, body.mileage)
         cur = c.execute("""INSERT INTO services(vehicle_id,service_date,mileage,service_type,cost,provider,notes,logged_by,reminder_id,created_at,updated_at)
           VALUES(?,?,?,?,?,?,?,?,?,?,?)""", (vehicle_id, body.date, body.mileage, body.type.strip(), body.cost, body.provider.strip(), body.notes.strip(), token["created_by"], body.reminder_id, stamp, stamp))
-        c.execute("UPDATE vehicles SET mileage=MAX(mileage,?),updated_at=? WHERE id=?", (body.mileage, stamp, vehicle_id))
+        update_vehicle_mileage(c, vehicle_id, body.mileage, token["created_by"], stamp)
         return service_dict(c, c.execute("SELECT * FROM services WHERE id=?", (cur.lastrowid,)).fetchone())
 
 @app.post("/api/v1/vehicles/{vehicle_id}/fuel", status_code=201)
@@ -939,7 +960,7 @@ async def v1_add_fuel(vehicle_id: int, request: Request, date: str = Form(...), 
         cur = c.execute("INSERT INTO fuel_entries(vehicle_id,fill_date,odometer,gallons,cost,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
                         (vehicle_id, date, odometer, gallons, cost, token["created_by"], stamp, stamp))
         fuel_id = cur.lastrowid
-        c.execute("UPDATE vehicles SET mileage=MAX(mileage,?),updated_at=? WHERE id=?", (odometer, stamp, vehicle_id))
+        update_vehicle_mileage(c, vehicle_id, odometer, token["created_by"], stamp)
         receipt = None
         if file and data:
             stored = f"{secrets.token_hex(16)}{RECEIPT_TYPES[mime]}"
@@ -960,10 +981,12 @@ class MileageV1In(BaseModel):
 
 @app.put("/api/v1/vehicles/{vehicle_id}/mileage")
 def v1_update_mileage(vehicle_id: int, body: MileageV1In, request: Request):
-    token_auth(request)
+    token=token_auth(request); stamp=now_iso()
     with db() as c:
         get_vehicle_or_404(c, vehicle_id)
-        c.execute("UPDATE vehicles SET mileage=?,updated_at=? WHERE id=?", (body.mileage, now_iso(), vehicle_id))
+        c.execute("UPDATE vehicles SET mileage=?,updated_at=? WHERE id=?", (body.mileage, stamp, vehicle_id))
+        c.execute("INSERT INTO mileage_updates(vehicle_id,mileage,recorded_by,recorded_at) VALUES(?,?,?,?)",
+                  (vehicle_id,body.mileage,token["created_by"],stamp))
         return vehicle_dict(c, c.execute("SELECT * FROM vehicles WHERE id=?", (vehicle_id,)).fetchone())
 
 class NoteV1In(BaseModel):
@@ -1113,7 +1136,7 @@ def import_data(payload:dict[str,Any],request:Request):
     stamp=now_iso(); idmap={}
     with db() as c:
         for r in c.execute("SELECT stored_name FROM receipts"): (RECEIPTS_DIR / r["stored_name"]).unlink(missing_ok=True)
-        c.execute("DELETE FROM receipts");c.execute("DELETE FROM services");c.execute("DELETE FROM reminders");c.execute("DELETE FROM fuel_entries");c.execute("DELETE FROM vehicles")
+        c.execute("DELETE FROM receipts");c.execute("DELETE FROM services");c.execute("DELETE FROM reminders");c.execute("DELETE FROM fuel_entries");c.execute("DELETE FROM mileage_updates");c.execute("DELETE FROM vehicles")
         for v in vehicles:
             cur=c.execute("INSERT INTO vehicles(name,year,mileage,icon,added_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
               (str(v.get("name","Vehicle"))[:80],str(v.get("year",""))[:4],max(0,int(v.get("mileage",0))),str(v.get("icon","🚗"))[:8],user["id"],stamp,stamp));idmap[str(v.get("id"))]=cur.lastrowid
@@ -1140,3 +1163,4 @@ app.mount("/static",StaticFiles(directory=BASE/"static"),name="static")
 def frontend(path:str):
     if path.startswith("api/"): raise HTTPException(404)
     return FileResponse(BASE/"static"/"index.html")
+
