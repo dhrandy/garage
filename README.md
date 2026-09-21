@@ -1,6 +1,6 @@
 # Garage
 
-![Garage logo](app/static/logo-512.png)
+![Garage logo](app/static/favicon-32.png)
 
 Garage is a simple vehicle maintenance tracker. It is self-hosted and multi-user. One shared garage keeps vehicle mileage, service history, maintenance reminders, and costs in sync across phones and computers. It runs as one Docker container with SQLite storage.
 
