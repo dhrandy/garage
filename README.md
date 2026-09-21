@@ -4,7 +4,7 @@ Garage is a self-hosted, multi-user vehicle maintenance tracker. One shared gara
 
 ## Quick start
 
-1. Copy `.env.example` to `.env` and replace `GARAGE_SECRET` with a long random value. One way to make one is `openssl rand -hex 32`.
+1. Set `GARAGE_SECRET` to a long random value. In Dockhand, enter it directly in the stack Environment tab when you paste the Compose file. No `.env` file is required. Plain Docker Compose users can instead place `GARAGE_SECRET` in a `.env` file beside `docker-compose.yml`. One way to generate a value is `openssl rand -hex 32`.
 2. Start Garage:
 
    ```sh
@@ -42,7 +42,7 @@ For a consistent backup, stop the container, copy `garage.db`, then start it aga
 ## Dockhand / CasaOS
 
 1. In Dockhand, create a stack and paste the contents of `docker-compose.yml`.
-2. Add `GARAGE_SECRET` as a stack environment variable, or keep a `.env` file beside the Compose file.
+2. Add `GARAGE_SECRET` in Dockhand's Environment tab. No `.env` file is required. Plain Docker Compose users can use a `.env` file beside the Compose file instead.
 3. Deploy the stack.
 4. Open port `8917` on the CasaOS host and complete first-run setup.
 
