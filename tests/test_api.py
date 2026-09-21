@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 os.environ['GARAGE_DATA_DIR']='/tmp/garage-pytest-data'
+os.environ['GARAGE_NOTIFY_WORKER']='false'
 from fastapi.testclient import TestClient
 from app import main
 
@@ -240,3 +241,68 @@ def test_vehicle_photos(tmp_path):
         assert admin.delete(f"/api/receipts/{replacement['id']}").status_code == 200
         assert admin.get('/api/vehicles').json()[0]['photo_receipt_id'] is None
         assert admin.post('/api/vehicles/1/photo', files={'file':('x.txt', b'no', 'text/plain')}).status_code == 400
+
+
+def test_notification_settings_and_test_button(tmp_path, monkeypatch):
+    main.DB_PATH = tmp_path / 'notify.db'
+    main._login_failures.clear()
+    main.init_db()
+    sent = []
+    monkeypatch.setattr(main, 'send_notification', lambda urls, title, body: (sent.append((urls, title, body)) or (True, '')))
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup', json={'username':'admin-test','password':'password-123'})
+        assert admin.get('/api/notifications').json() == {'apprise_urls':''}
+        assert admin.put('/api/notifications', json={'apprise_urls':'not-a-url'}).status_code == 400
+        assert admin.put('/api/notifications', json={'apprise_urls':'tgram://token/chat'}).json() == {'apprise_urls':'tgram://token/chat'}
+        assert admin.post('/api/notifications/test').status_code == 200
+        assert sent and sent[0][0] == 'tgram://token/chat'
+        admin.post('/api/users', json={'username':'member-test','password':'password-456','is_admin':False})
+    with TestClient(main.app) as member:
+        member.post('/api/login', json={'username':'member-test','password':'password-456'})
+        assert member.get('/api/notifications').status_code == 403
+        assert member.put('/api/notifications', json={'apprise_urls':'tgram://x/y'}).status_code == 403
+        assert member.post('/api/notifications/test').status_code == 403
+
+
+def test_daily_check_notifies_only_newly_due(tmp_path, monkeypatch):
+    main.DB_PATH = tmp_path / 'due.db'
+    main._login_failures.clear()
+    main.init_db()
+    sent = []
+    monkeypatch.setattr(main, 'send_notification', lambda urls, title, body: (sent.append(body) or (True, '')))
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup', json={'username':'admin-test','password':'password-123'})
+        admin.put('/api/notifications', json={'apprise_urls':'json://example.invalid/hook'})
+        admin.post('/api/services', json={'vehicle_id':1,'date':'2026-09-01','mileage':20000,'type':'Tires'})
+        admin.post('/api/reminders', json={'vehicle_id':1,'name':'Oil change','miles_interval':5000,'months_interval':None,'last_date':'2026-09-01','last_mileage':20000})
+        assert main.run_notification_check() is False  # 0% used: nothing due
+        admin.post('/api/fuel', json={'vehicle_id':1,'date':'2026-09-20','odometer':24500,'gallons':10,'cost':35})
+        assert main.run_notification_check() is True  # 90% used: newly due soon
+        assert len(sent) == 1 and 'Oil change' in sent[0] and 'Due soon' in sent[0]
+        assert main.run_notification_check() is False  # same state: no repeat
+        admin.post('/api/fuel', json={'vehicle_id':1,'date':'2026-09-21','odometer':25100,'gallons':10,'cost':35})
+        assert main.run_notification_check() is True  # escalated to overdue
+        assert len(sent) == 2 and 'OVERDUE' in sent[1]
+        # fixing the item clears state, so a later due item notifies again
+        admin.put('/api/reminders/1', json={'vehicle_id':1,'name':'Oil change','miles_interval':5000,'months_interval':None,'last_date':'2026-09-21','last_mileage':25100})
+        assert main.run_notification_check() is False
+        admin.post('/api/fuel', json={'vehicle_id':1,'date':'2026-09-22','odometer':29650,'gallons':10,'cost':35})
+        assert main.run_notification_check() is True and len(sent) == 3
+
+
+def test_webhook_fallback_posts_json(tmp_path):
+    import http.server, threading as th
+    received = []
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            received.append(self.rfile.read(int(self.headers['Content-Length'])))
+            self.send_response(200); self.end_headers()
+        def log_message(self, *args): pass
+    server = http.server.HTTPServer(('127.0.0.1', 0), Handler)
+    th.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        ok, detail = main.send_notification(f'http://127.0.0.1:{server.server_port}/hook', 'T', 'B')
+        assert ok, detail
+        assert received and __import__('json').loads(received[0]) == {'title':'T','body':'B'}
+    finally:
+        server.shutdown()

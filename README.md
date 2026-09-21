@@ -55,6 +55,20 @@ ports:
   - 8917:8000
 ```
 
+## Notifications
+
+Garage can send maintenance alerts through [Apprise](https://github.com/caronc/apprise), which routes one URL to Telegram, Discord, email, and 80+ other services. Administrators configure it in **Settings → Notifications**: add one or more Apprise URLs, one per line, and use **Send test notification** to verify delivery. Once a day, Garage checks every maintenance item against current or estimated mileage and dates, and sends a single notification when an item newly becomes due soon or overdue. Fixing the item re-arms the alert; a state that does not change is never re-sent.
+
+Example URLs:
+
+```text
+discord://webhook_id/webhook_token
+tgram://bot_token/chat_id
+mailto://user:pass@smtp.example.com?to=you@example.com
+```
+
+A plain `http(s)://` URL receives a JSON webhook POST instead (`{"title": ..., "body": ...}`), which also works if the apprise package is unavailable. Treat these URLs like passwords: they carry service tokens, so only administrators can read or change them. The URLs and the sent-state live in SQLite.
+
 ## REST API tokens
 
 Scripts and integrations can use token-authenticated REST endpoints under `/api/v1`. Administrators create named tokens in **Settings → API tokens**. The full token is shown once at creation; Garage stores only its SHA-256 hash. Revoking a token disables it immediately. Interactive OpenAPI docs are at `/api/docs` on your server.
@@ -155,4 +169,5 @@ The browser uses a JSON REST API under `/api`. Authentication is cookie-based.
 - `GET/PUT /api/settings` (`PUT` is administrator only)
 - `GET/POST /api/users`, `PUT /api/users/{id}` (administrator only)
 - `GET/POST /api/tokens`, `DELETE /api/tokens/{id}` (administrator only)
+- `GET/PUT /api/notifications`, `POST /api/notifications/test` (administrator only)
 - `/api/v1/...` token endpoints (see **REST API tokens**)

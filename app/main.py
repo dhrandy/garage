@@ -8,6 +8,7 @@ import secrets
 import sqlite3
 import threading
 import time
+import urllib.request
 from contextlib import contextmanager
 from collections import defaultdict, deque
 from datetime import date, datetime, timedelta, timezone
@@ -221,6 +222,8 @@ def init_db():
 @app.on_event("startup")
 def startup():
     init_db()
+    if os.getenv("GARAGE_NOTIFY_WORKER", "true").lower() == "true":
+        threading.Thread(target=notification_worker, daemon=True).start()
 
 def clean_username(value: str) -> str:
     value = value.strip()
@@ -895,6 +898,114 @@ async def v1_add_fuel(vehicle_id: int, request: Request, date: str = Form(...), 
         if receipt:
             entry["receipt"] = receipt
         return entry
+
+def send_notification(urls: str, title: str, body: str) -> tuple[bool, str]:
+    targets = urls.split()
+    webhook_urls = [u for u in targets if u.startswith(("http://", "https://"))]
+    apprise_urls = [u for u in targets if u not in webhook_urls]
+    ok = False
+    errors: list[str] = []
+    for url in webhook_urls:
+        try:
+            req = urllib.request.Request(url, data=json.dumps({"title": title, "body": body}).encode(),
+                                         headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                ok = ok or resp.status < 400
+        except Exception as exc:
+            errors.append(f"webhook {url}: {exc}")
+    if apprise_urls:
+        try:
+            import apprise
+        except ImportError:
+            errors.append("apprise is not installed; only http(s) webhook URLs work without it")
+        else:
+            ap = apprise.Apprise()
+            for url in apprise_urls:
+                ap.add(url)
+            if ap.notify(title=title, body=body):
+                ok = True
+            else:
+                errors.append("apprise delivery failed; check the URL and its service")
+    return ok, "; ".join(errors)
+
+def due_maintenance_items(c) -> list[dict[str, Any]]:
+    items = []
+    for v in c.execute("SELECT * FROM vehicles"):
+        mileage = effective_mileage(c, v)
+        for r in c.execute("SELECT * FROM reminders WHERE vehicle_id=?", (v["id"],)):
+            st = reminder_status(mileage, r)
+            if st["state"] in ("soon", "overdue"):
+                items.append({"reminder_id": r["id"], "vehicle": v["name"], "item": r["name"], "state": st["state"], "label": st["label"]})
+    return items
+
+def run_notification_check() -> bool:
+    with db() as c:
+        row = c.execute("SELECT value FROM settings WHERE key='notify_urls'").fetchone()
+        urls = row["value"] if row else ""
+        if not urls.strip():
+            return False
+        row = c.execute("SELECT value FROM settings WHERE key='notify_state'").fetchone()
+        try:
+            known = json.loads(row["value"]) if row else {}
+        except json.JSONDecodeError:
+            known = {}
+        items = due_maintenance_items(c)
+        fresh = [i for i in items if known.get(str(i["reminder_id"])) != i["state"]]
+        if fresh:
+            name_row = c.execute("SELECT value FROM settings WHERE key='garage_name'").fetchone()
+            title = f"{name_row['value'] if name_row else 'Garage'}: maintenance due"
+            body = "\n".join(f"{'OVERDUE' if i['state'] == 'overdue' else 'Due soon'}: {i['vehicle']} - {i['item']} ({i['label']})" for i in fresh)
+            ok, detail = send_notification(urls, title, body)
+            if not ok:
+                raise RuntimeError(detail or "notification delivery failed")
+        current = {str(i["reminder_id"]): i["state"] for i in items}
+        c.execute("INSERT INTO settings(key,value) VALUES('notify_state',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(current),))
+        c.execute("INSERT INTO settings(key,value) VALUES('notify_last_check',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (datetime.now(timezone.utc).date().isoformat(),))
+        return bool(fresh)
+
+def notification_worker():
+    while True:
+        try:
+            with db() as c:
+                row = c.execute("SELECT value FROM settings WHERE key='notify_last_check'").fetchone()
+            if (row["value"] if row else None) != datetime.now(timezone.utc).date().isoformat():
+                run_notification_check()
+        except Exception as exc:
+            print(f"notification check failed: {exc}")
+        time.sleep(3600)
+
+class NotificationSettingsIn(BaseModel):
+    apprise_urls: str = Field(default="", max_length=2000)
+
+@app.get("/api/notifications")
+def get_notification_settings(request: Request):
+    current_user(request, True)
+    with db() as c:
+        row = c.execute("SELECT value FROM settings WHERE key='notify_urls'").fetchone()
+    return {"apprise_urls": row["value"] if row else ""}
+
+@app.put("/api/notifications")
+def update_notification_settings(body: NotificationSettingsIn, request: Request):
+    current_user(request, True)
+    urls = body.apprise_urls.strip()
+    if any("://" not in u for u in urls.split()):
+        raise HTTPException(400, "Each notification URL needs a scheme, like tgram:// or https://")
+    with db() as c:
+        c.execute("INSERT INTO settings(key,value) VALUES('notify_urls',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (urls,))
+    return {"apprise_urls": urls}
+
+@app.post("/api/notifications/test")
+def send_test_notification(request: Request):
+    current_user(request, True)
+    with db() as c:
+        row = c.execute("SELECT value FROM settings WHERE key='notify_urls'").fetchone()
+    urls = row["value"] if row else ""
+    if not urls.strip():
+        raise HTTPException(400, "Add at least one notification URL first")
+    ok, detail = send_notification(urls, "Garage: test notification", "Notifications are working. Maintenance alerts will arrive here.")
+    if not ok:
+        raise HTTPException(502, detail or "Notification delivery failed")
+    return {"ok": True}
 
 @app.get("/api/export")
 def export_data(request:Request):
