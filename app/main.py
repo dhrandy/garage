@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -23,6 +23,10 @@ BASE = Path(__file__).resolve().parent
 DATA_DIR = Path(os.getenv("GARAGE_DATA_DIR", "/app/data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / "garage.db"
+RECEIPTS_DIR = DATA_DIR / "receipts"
+RECEIPTS_DIR.mkdir(parents=True, exist_ok=True)
+RECEIPT_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif", "image/heic": ".heic"}
+RECEIPT_MAX_BYTES = 10 * 1024 * 1024
 COOKIE = "garage_session"
 SESSION_DAYS = 30
 PBKDF2_ITERATIONS = 260_000
@@ -138,6 +142,17 @@ def init_db():
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS receipts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          kind TEXT NOT NULL CHECK(kind IN ('service','fuel','vehicle')),
+          entry_id INTEGER NOT NULL,
+          stored_name TEXT NOT NULL,
+          orig_name TEXT NOT NULL DEFAULT '',
+          mime TEXT NOT NULL DEFAULT 'image/jpeg',
+          size INTEGER NOT NULL DEFAULT 0,
+          uploaded_by INTEGER REFERENCES users(id),
+          created_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS reminders (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
@@ -150,6 +165,8 @@ def init_db():
           updated_at TEXT NOT NULL
         );
         """)
+        if "photo_receipt_id" not in {r["name"] for r in c.execute("PRAGMA table_info(vehicles)")}:
+            c.execute("ALTER TABLE vehicles ADD COLUMN photo_receipt_id INTEGER REFERENCES receipts(id)")
         c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", ("garage_name", "Your Garage"))
         for key in SETTINGS_KEYS[1:]:
             c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (key, "0"))
@@ -351,6 +368,11 @@ def update_vehicle(item_id:int, body:VehicleIn, request:Request):
 def delete_vehicle(item_id:int, request:Request):
     current_user(request)
     with db() as c:
+        service_ids=[r["id"] for r in c.execute("SELECT id FROM services WHERE vehicle_id=?",(item_id,))]
+        fuel_ids=[r["id"] for r in c.execute("SELECT id FROM fuel_entries WHERE vehicle_id=?",(item_id,))]
+        for sid in service_ids: delete_receipt_files(c, "service", sid)
+        for fid in fuel_ids: delete_receipt_files(c, "fuel", fid)
+        delete_receipt_files(c, "vehicle", item_id)
         if not c.execute("DELETE FROM vehicles WHERE id=?",(item_id,)).rowcount: raise HTTPException(404,"Vehicle not found")
     return {"ok":True}
 
@@ -390,6 +412,7 @@ def delete_service(item_id:int,request:Request):
     current_user(request)
     with db() as c:
         if not c.execute("DELETE FROM services WHERE id=?",(item_id,)).rowcount: raise HTTPException(404,"Service not found")
+        delete_receipt_files(c, "service", item_id)
     return {"ok":True}
 
 def fuel_rows(c, vehicle_id: int | None = None) -> list[dict[str, Any]]:
@@ -444,6 +467,72 @@ def delete_fuel(item_id: int, request: Request):
     with db() as c:
         if not c.execute("DELETE FROM fuel_entries WHERE id=?", (item_id,)).rowcount:
             raise HTTPException(404, "Fill-up not found")
+        delete_receipt_files(c, "fuel", item_id)
+    return {"ok": True}
+
+def receipt_dict(c, row) -> dict[str, Any]:
+    return {"id": row["id"], "kind": row["kind"], "entry_id": row["entry_id"], "orig_name": row["orig_name"],
+            "mime": row["mime"], "size": row["size"], "uploaded_by": display_user(c, row["uploaded_by"]),
+            "created_at": row["created_at"], "url": f"/api/receipts/{row['id']}"}
+
+def delete_receipt_files(c, kind: str, entry_id: int) -> None:
+    for r in c.execute("SELECT stored_name FROM receipts WHERE kind=? AND entry_id=?", (kind, entry_id)):
+        (RECEIPTS_DIR / r["stored_name"]).unlink(missing_ok=True)
+    c.execute("DELETE FROM receipts WHERE kind=? AND entry_id=?", (kind, entry_id))
+
+@app.get("/api/receipts")
+def list_receipts(request: Request, kind: str | None = None, entry_id: int | None = None):
+    current_user(request)
+    with db() as c:
+        rows = c.execute("SELECT * FROM receipts WHERE (? IS NULL OR kind=?) AND (? IS NULL OR entry_id=?) ORDER BY id", (kind, kind, entry_id, entry_id))
+        return [receipt_dict(c, r) for r in rows]
+
+@app.post("/api/receipts", status_code=201)
+async def upload_receipt(request: Request, kind: str = Form(...), entry_id: int = Form(...), file: UploadFile = File(...)):
+    user = current_user(request)
+    if kind not in ("service", "fuel"):
+        raise HTTPException(400, "Receipts attach to service or fuel entries")
+    mime = (file.content_type or "").lower()
+    if mime not in RECEIPT_TYPES:
+        raise HTTPException(400, "Receipt photos must be JPEG, PNG, WebP, GIF, or HEIC images")
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "Empty file")
+    if len(data) > RECEIPT_MAX_BYTES:
+        raise HTTPException(400, "Receipt photos are limited to 10 MB")
+    with db() as c:
+        table = "services" if kind == "service" else "fuel_entries"
+        if not c.execute(f"SELECT 1 FROM {table} WHERE id=?", (entry_id,)).fetchone():
+            raise HTTPException(404, "Entry not found")
+        stored = f"{secrets.token_hex(16)}{RECEIPT_TYPES[mime]}"
+        (RECEIPTS_DIR / stored).write_bytes(data)
+        cur = c.execute("INSERT INTO receipts(kind,entry_id,stored_name,orig_name,mime,size,uploaded_by,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                        (kind, entry_id, stored, (file.filename or "")[:120], mime, len(data), user["id"], now_iso()))
+        return receipt_dict(c, c.execute("SELECT * FROM receipts WHERE id=?", (cur.lastrowid,)).fetchone())
+
+@app.get("/api/receipts/{receipt_id}")
+def get_receipt(receipt_id: int, request: Request):
+    current_user(request)
+    with db() as c:
+        row = c.execute("SELECT * FROM receipts WHERE id=?", (receipt_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Receipt not found")
+    path = RECEIPTS_DIR / row["stored_name"]
+    if not path.exists():
+        raise HTTPException(404, "Receipt file is missing")
+    return FileResponse(path, media_type=row["mime"])
+
+@app.delete("/api/receipts/{receipt_id}")
+def delete_receipt(receipt_id: int, request: Request):
+    current_user(request)
+    with db() as c:
+        row = c.execute("SELECT * FROM receipts WHERE id=?", (receipt_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Receipt not found")
+        if row["kind"] == "vehicle":
+            c.execute("UPDATE vehicles SET photo_receipt_id=NULL WHERE photo_receipt_id=?", (receipt_id,))
+        (RECEIPTS_DIR / row["stored_name"]).unlink(missing_ok=True)
+        c.execute("DELETE FROM receipts WHERE id=?", (receipt_id,))
     return {"ok": True}
 
 def reminder_dict(row):
@@ -554,7 +643,8 @@ def import_data(payload:dict[str,Any],request:Request):
     if not isinstance(vehicles,list) or not isinstance(services,list) or not isinstance(reminders,list) or not isinstance(fuel,list): raise HTTPException(400,"Invalid JSON backup")
     stamp=now_iso(); idmap={}
     with db() as c:
-        c.execute("DELETE FROM services");c.execute("DELETE FROM reminders");c.execute("DELETE FROM fuel_entries");c.execute("DELETE FROM vehicles")
+        for r in c.execute("SELECT stored_name FROM receipts"): (RECEIPTS_DIR / r["stored_name"]).unlink(missing_ok=True)
+        c.execute("DELETE FROM receipts");c.execute("DELETE FROM services");c.execute("DELETE FROM reminders");c.execute("DELETE FROM fuel_entries");c.execute("DELETE FROM vehicles")
         for v in vehicles:
             cur=c.execute("INSERT INTO vehicles(name,year,mileage,icon,added_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
               (str(v.get("name","Vehicle"))[:80],str(v.get("year",""))[:4],max(0,int(v.get("mileage",0))),str(v.get("icon","🚗"))[:8],user["id"],stamp,stamp));idmap[str(v.get("id"))]=cur.lastrowid

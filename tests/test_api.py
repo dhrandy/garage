@@ -59,7 +59,7 @@ def test_admin_can_rename_garage_and_member_cannot(tmp_path):
         assert member.put('/api/settings', json={'garage_name':'Nope'}).status_code == 403
 
 
-Add per-vehicle fuel log with MPG trackingdef test_admin_can_hide_vehicle_sections(tmp_path):
+def test_admin_can_hide_vehicle_sections(tmp_path):
     main.DB_PATH = tmp_path / 'sections.db'
     main._login_failures.clear()
     main.init_db()
@@ -96,3 +96,32 @@ def test_fuel_log_computes_mpg_and_bumps_mileage(tmp_path):
         assert member.put('/api/fuel/%s' % second['id'], json={'vehicle_id':1,'date':'2026-09-15','odometer':20310,'gallons':10,'cost':37}).status_code == 200
         assert member.delete('/api/fuel/%s' % second['id']).status_code == 200
         assert len(member.get('/api/fuel?vehicle_id=1').json()) == 1
+
+
+PNG_BYTES = __import__('base64').b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')
+
+Add receipt photo uploads for service and fuel entriesdef test_receipt_upload_view_delete(tmp_path):
+    main.DB_PATH = tmp_path / 'receipts.db'
+    main.RECEIPTS_DIR = tmp_path / 'receipts'
+    main.RECEIPTS_DIR.mkdir(exist_ok=True)
+    main._login_failures.clear()
+    main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup', json={'username':'admin-test','password':'password-123'})
+        admin.post('/api/services', json={'vehicle_id':1,'date':'2026-09-20','mileage':24000,'type':'Oil change','cost':55})
+        admin.post('/api/fuel', json={'vehicle_id':1,'date':'2026-09-20','odometer':24000,'gallons':10,'cost':35})
+        created = admin.post('/api/receipts', data={'kind':'service','entry_id':'1'}, files={'file':('receipt.png', PNG_BYTES, 'image/png')})
+        assert created.status_code == 201
+        rid = created.json()['id']
+        assert admin.post('/api/receipts', data={'kind':'fuel','entry_id':'1'}, files={'file':('fuel.png', PNG_BYTES, 'image/png')}).status_code == 201
+        assert admin.post('/api/receipts', data={'kind':'service','entry_id':'1'}, files={'file':('notes.txt', b'nope', 'text/plain')}).status_code == 400
+        assert len(admin.get('/api/receipts?kind=service&entry_id=1').json()) == 1
+        served = admin.get(f'/api/receipts/{rid}')
+        assert served.status_code == 200 and served.content == PNG_BYTES
+        assert admin.delete('/api/services/1').status_code == 200
+        assert admin.get('/api/receipts?kind=service&entry_id=1').json() == []
+        assert admin.get(f'/api/receipts/{rid}').status_code == 404
+        remaining = admin.get('/api/receipts?kind=fuel&entry_id=1').json()
+        assert admin.delete(f"/api/receipts/{remaining[0]['id']}").status_code == 200
+    with TestClient(main.app) as anon:
+        assert anon.get('/api/receipts').status_code == 401

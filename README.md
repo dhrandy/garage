@@ -26,6 +26,10 @@ Settings also has **Vehicle page sections** checkboxes to hide the Service log, 
 
 Each vehicle has a **Fuel** tab for fill-ups: date, odometer, gallons, and total cost. MPG is computed automatically between consecutive fill-ups, and the tab shows the running average MPG and fuel cost per mile. Logging a fill-up also raises the vehicle's recorded mileage when the odometer reading is higher. Fuel entries are included in JSON exports and imports.
 
+## Receipt photos
+
+Service entries and fill-ups can carry receipt photos. Use the receipt field when logging or editing an entry; on phones the field opens the camera. Photos are stored on disk under `/app/data/receipts` inside the existing data volume, so the same backup that covers `garage.db` covers them. Images are limited to 10 MB each (JPEG, PNG, WebP, GIF, HEIC), are served only to signed-in users, and deleting an entry deletes its photos. Receipt images are not part of JSON exports.
+
 ## Users
 
 Administrators can open **Users** from the top bar to create users, change usernames, reset passwords, grant or remove administrator access, and deactivate accounts. All active users see the same garage. Every vehicle and service entry records the user who added or logged it. Non-administrators can manage vehicles, services, mileage, and reminders, but cannot manage users.
@@ -47,7 +51,7 @@ Garage stores all app data in `/app/data/garage.db`. With the included bind moun
 /DATA/AppData/garage/garage.db
 ```
 
-For a consistent backup, stop the container, copy `garage.db`, then start it again. Restore by stopping Garage and replacing that file with the backup. JSON export and import in the app are useful for moving garage records, but they do not include user accounts or login sessions.
+For a consistent backup, stop the container, copy `garage.db` and the `receipts` folder beside it, then start it again. Restore by stopping Garage and replacing both with the backup. JSON export and import in the app are useful for moving garage records, but they do not include user accounts or login sessions.
 
 ## Dockhand / CasaOS
 
@@ -97,6 +101,7 @@ The browser uses a JSON REST API under `/api`. Authentication is cookie-based.
 - `GET/POST /api/vehicles`, `PUT/DELETE /api/vehicles/{id}`
 - `GET/POST /api/services`, `PUT/DELETE /api/services/{id}`
 - `GET/POST /api/fuel`, `PUT/DELETE /api/fuel/{id}`
+- `GET/POST /api/receipts`, `GET/DELETE /api/receipts/{id}` (multipart upload)
 - `GET/POST /api/reminders`, `PUT/DELETE /api/reminders/{id}`
 - `GET /api/export`, `POST /api/import`
 - `GET/PUT /api/settings` (`PUT` is administrator only)
