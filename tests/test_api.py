@@ -172,3 +172,24 @@ def test_api_invalid_token_rate_limit(tmp_path):
             assert client.get('/api/v1/vehicles', headers={'Authorization':'Bearer gar_wrong'}).status_code == 401
         response = client.get('/api/v1/vehicles', headers={'Authorization':'Bearer gar_wrong'})
         assert response.status_code == 429 and int(response.headers['retry-after']) > 0
+
+
+def test_service_can_reset_maintenance_item(tmp_path):
+    main.DB_PATH = tmp_path / 'reset.db'
+    main._login_failures.clear(); main._api_calls.clear(); main._api_failures.clear()
+    main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup', json={'username':'admin-test','password':'password-123'})
+        reminder = admin.post('/api/reminders', json={'vehicle_id':1,'name':'Oil change','miles_interval':5000,'months_interval':6,'last_date':'2026-03-01','last_mileage':20000}).json()
+        before = len(admin.get('/api/services?vehicle_id=1').json())
+        service = admin.post('/api/services', json={'vehicle_id':1,'date':'2026-09-20','mileage':24000,'type':'Oil change','cost':55,'reminder_id':reminder['id']})
+        assert service.status_code == 200 and service.json()['reminder_id'] == reminder['id']
+        updated = admin.get('/api/reminders?vehicle_id=1').json()[0]
+        assert updated['last_date'] == '2026-09-20' and updated['last_mileage'] == 24000
+        assert len(admin.get('/api/services?vehicle_id=1').json()) == before + 1
+        assert admin.post('/api/services', json={'vehicle_id':1,'date':'2026-09-20','mileage':24000,'type':'X','reminder_id':999}).status_code == 400
+        token = admin.post('/api/tokens', json={'name':'script'}).json()['token']
+        via_api = admin.post('/api/v1/vehicles/1/services', headers={'Authorization': f'Bearer {token}'},
+                             json={'date':'2026-09-21','mileage':24100,'type':'Oil change','reminder_id':reminder['id']})
+        assert via_api.status_code == 201
+        assert admin.get('/api/reminders?vehicle_id=1').json()[0]['last_mileage'] == 24100

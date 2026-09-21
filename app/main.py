@@ -204,6 +204,8 @@ def init_db():
           updated_at TEXT NOT NULL
         );
         """)
+        if "reminder_id" not in {r["name"] for r in c.execute("PRAGMA table_info(services)")}:
+            c.execute("ALTER TABLE services ADD COLUMN reminder_id INTEGER REFERENCES reminders(id)")
         if "photo_receipt_id" not in {r["name"] for r in c.execute("PRAGMA table_info(vehicles)")}:
             c.execute("ALTER TABLE vehicles ADD COLUMN photo_receipt_id INTEGER REFERENCES receipts(id)")
         c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", ("garage_name", "Your Garage"))
@@ -288,6 +290,7 @@ class ServiceIn(BaseModel):
     cost: float = Field(default=0, ge=0)
     provider: str = Field(default="", max_length=100)
     notes: str = Field(default="", max_length=1000)
+    reminder_id: int | None = None
 
 class FuelIn(BaseModel):
     vehicle_id: int
@@ -415,10 +418,18 @@ def delete_vehicle(item_id:int, request:Request):
         if not c.execute("DELETE FROM vehicles WHERE id=?",(item_id,)).rowcount: raise HTTPException(404,"Vehicle not found")
     return {"ok":True}
 
+def apply_reminder_reset(c, vehicle_id: int, reminder_id: int | None, service_date: str, mileage: int) -> None:
+    if reminder_id is None:
+        return
+    cur = c.execute("UPDATE reminders SET last_date=?,last_mileage=?,updated_at=? WHERE id=? AND vehicle_id=?",
+                    (service_date, mileage, now_iso(), reminder_id, vehicle_id))
+    if not cur.rowcount:
+        raise HTTPException(400, "Maintenance item not found for this vehicle")
+
 def service_dict(c,row):
     return {"id":row["id"],"vehicle_id":row["vehicle_id"],"date":row["service_date"],"mileage":row["mileage"],
             "type":row["service_type"],"cost":row["cost"],"provider":row["provider"],"notes":row["notes"],
-            "logged_by":display_user(c,row["logged_by"]),"logged_by_id":row["logged_by"],"created_at":row["created_at"],"updated_at":row["updated_at"]}
+            "logged_by":display_user(c,row["logged_by"]),"logged_by_id":row["logged_by"],"reminder_id":row["reminder_id"],"created_at":row["created_at"],"updated_at":row["updated_at"]}
 
 @app.get("/api/services")
 def list_services(request:Request, vehicle_id:int|None=None):
@@ -432,8 +443,9 @@ def add_service(body:ServiceIn, request:Request):
     user=current_user(request); stamp=now_iso()
     with db() as c:
         if not c.execute("SELECT 1 FROM vehicles WHERE id=?",(body.vehicle_id,)).fetchone(): raise HTTPException(404,"Vehicle not found")
-        cur=c.execute("""INSERT INTO services(vehicle_id,service_date,mileage,service_type,cost,provider,notes,logged_by,created_at,updated_at)
-          VALUES(?,?,?,?,?,?,?,?,?,?)""",(body.vehicle_id,body.date,body.mileage,body.type.strip(),body.cost,body.provider.strip(),body.notes.strip(),user["id"],stamp,stamp))
+        apply_reminder_reset(c, body.vehicle_id, body.reminder_id, body.date, body.mileage)
+        cur=c.execute("""INSERT INTO services(vehicle_id,service_date,mileage,service_type,cost,provider,notes,logged_by,reminder_id,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(body.vehicle_id,body.date,body.mileage,body.type.strip(),body.cost,body.provider.strip(),body.notes.strip(),user["id"],body.reminder_id,stamp,stamp))
         c.execute("UPDATE vehicles SET mileage=MAX(mileage,?),updated_at=? WHERE id=?",(body.mileage,stamp,body.vehicle_id))
         return service_dict(c,c.execute("SELECT * FROM services WHERE id=?",(cur.lastrowid,)).fetchone())
 
@@ -441,8 +453,9 @@ def add_service(body:ServiceIn, request:Request):
 def update_service(item_id:int,body:ServiceIn,request:Request):
     current_user(request)
     with db() as c:
-        cur=c.execute("""UPDATE services SET vehicle_id=?,service_date=?,mileage=?,service_type=?,cost=?,provider=?,notes=?,updated_at=? WHERE id=?""",
-          (body.vehicle_id,body.date,body.mileage,body.type.strip(),body.cost,body.provider.strip(),body.notes.strip(),now_iso(),item_id))
+        apply_reminder_reset(c, body.vehicle_id, body.reminder_id, body.date, body.mileage)
+        cur=c.execute("""UPDATE services SET vehicle_id=?,service_date=?,mileage=?,service_type=?,cost=?,provider=?,notes=?,reminder_id=?,updated_at=? WHERE id=?""",
+          (body.vehicle_id,body.date,body.mileage,body.type.strip(),body.cost,body.provider.strip(),body.notes.strip(),body.reminder_id,now_iso(),item_id))
         if not cur.rowcount: raise HTTPException(404,"Service not found")
         return service_dict(c,c.execute("SELECT * FROM services WHERE id=?",(item_id,)).fetchone())
 
@@ -754,6 +767,7 @@ class ServiceV1In(BaseModel):
     cost: float = Field(default=0, ge=0)
     provider: str = Field(default="", max_length=100)
     notes: str = Field(default="", max_length=1000)
+    reminder_id: int | None = None
 
 @app.get("/api/v1/vehicles")
 def v1_list_vehicles(request: Request):
@@ -792,8 +806,9 @@ def v1_add_service(vehicle_id: int, body: ServiceV1In, request: Request):
     token = token_auth(request); stamp = now_iso()
     with db() as c:
         get_vehicle_or_404(c, vehicle_id)
-        cur = c.execute("""INSERT INTO services(vehicle_id,service_date,mileage,service_type,cost,provider,notes,logged_by,created_at,updated_at)
-          VALUES(?,?,?,?,?,?,?,?,?,?)""", (vehicle_id, body.date, body.mileage, body.type.strip(), body.cost, body.provider.strip(), body.notes.strip(), token["created_by"], stamp, stamp))
+        apply_reminder_reset(c, vehicle_id, body.reminder_id, body.date, body.mileage)
+        cur = c.execute("""INSERT INTO services(vehicle_id,service_date,mileage,service_type,cost,provider,notes,logged_by,reminder_id,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?)""", (vehicle_id, body.date, body.mileage, body.type.strip(), body.cost, body.provider.strip(), body.notes.strip(), token["created_by"], body.reminder_id, stamp, stamp))
         c.execute("UPDATE vehicles SET mileage=MAX(mileage,?),updated_at=? WHERE id=?", (body.mileage, stamp, vehicle_id))
         return service_dict(c, c.execute("SELECT * FROM services WHERE id=?", (cur.lastrowid,)).fetchone())
 

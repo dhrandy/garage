@@ -22,6 +22,10 @@ Administrators can open **Settings** to rename the garage. The name is stored in
 
 Settings also has **Vehicle page sections** checkboxes to hide the Service log, Maintenance, Fuel, and Costs sections. Hidden sections disappear from every vehicle page for all users. The choices are stored in SQLite and apply to everyone, including non-administrators.
 
+## Maintenance reminders and service logging
+
+The **Maintenance** tab on each vehicle tracks recurring items by miles, months, or both. When logging a service you can pick **Marks maintenance done** to link it to one of those items; the item's last-done date and mileage reset to the service entry, so nothing has to be recorded twice. The same link is available in the REST API as `reminder_id` on the service-create endpoints.
+
 ## Fuel log
 
 Each vehicle has a **Fuel** tab for fill-ups: date, odometer, gallons, and total cost. MPG is computed automatically between consecutive fill-ups, and the tab shows the running average MPG and fuel cost per mile. Logging a fill-up also raises the vehicle's recorded mileage when the odometer reading is higher. Fuel entries are included in JSON exports and imports.
