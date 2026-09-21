@@ -380,8 +380,33 @@ def logout(request: Request, response: Response):
 def me(request: Request):
     return public_user(current_user(request))
 
+def mileage_estimate(c, vehicle_id: int, today: date | None = None) -> dict[str, Any]:
+    today = today or datetime.now(timezone.utc).date()
+    points = [(r["service_date"], r["mileage"]) for r in c.execute("SELECT service_date,mileage FROM services WHERE vehicle_id=? AND mileage>0", (vehicle_id,))]
+    points += [(r["fill_date"], r["odometer"]) for r in c.execute("SELECT fill_date,odometer FROM fuel_entries WHERE vehicle_id=? AND odometer>0", (vehicle_id,))]
+    points = sorted(set(points))
+    if not points:
+        return {"est_mileage": None, "miles_per_day": None}
+    first_date, first_odo = points[0]
+    last_date, last_odo = points[-1]
+    rate = None
+    days = (datetime.strptime(last_date, "%Y-%m-%d").date() - datetime.strptime(first_date, "%Y-%m-%d").date()).days
+    if len(points) >= 2 and days >= 7 and last_odo > first_odo:
+        rate = (last_odo - first_odo) / days
+    est = last_odo
+    if rate:
+        days_since = (today - datetime.strptime(last_date, "%Y-%m-%d").date()).days
+        est = last_odo + rate * max(0, days_since)
+    return {"est_mileage": round(est), "miles_per_day": round(rate, 1) if rate is not None else None}
+
+def effective_mileage(c, vehicle_row) -> int:
+    est = mileage_estimate(c, vehicle_row["id"])["est_mileage"]
+    return max(vehicle_row["mileage"], est or 0)
+
 def vehicle_dict(c, row):
+    est = mileage_estimate(c, row["id"])
     return {"id":row["id"],"name":row["name"],"year":row["year"],"mileage":row["mileage"],"icon":row["icon"],
+            "est_mileage":est["est_mileage"],"miles_per_day":est["miles_per_day"],"photo_receipt_id":row["photo_receipt_id"],
             "added_by":display_user(c,row["added_by"]),"created_at":row["created_at"],"updated_at":row["updated_at"]}
 
 @app.get("/api/vehicles")
@@ -788,9 +813,10 @@ def v1_maintenance(vehicle_id: int, request: Request):
     token_auth(request)
     with db() as c:
         v = get_vehicle_or_404(c, vehicle_id)
+        mileage = effective_mileage(c, v)
         out = []
         for r in c.execute("SELECT * FROM reminders WHERE vehicle_id=? ORDER BY id", (vehicle_id,)):
-            st = reminder_status(v["mileage"], r)
+            st = reminder_status(mileage, r)
             out.append({**reminder_dict(r), "status": st["state"], "progress": st["progress"], "label": st["label"]})
         return out
 

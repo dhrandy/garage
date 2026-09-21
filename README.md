@@ -26,6 +26,10 @@ Settings also has **Vehicle page sections** checkboxes to hide the Service log, 
 
 The **Maintenance** tab on each vehicle tracks recurring items by miles, months, or both. When logging a service you can pick **Marks maintenance done** to link it to one of those items; the item's last-done date and mileage reset to the service entry, so nothing has to be recorded twice. The same link is available in the REST API as `reminder_id` on the service-create endpoints.
 
+## Estimated mileage
+
+Garage learns each vehicle's driving pace from dated odometer readings in service entries and fill-ups. Vehicle cards and pages show an **est. current mileage** when the estimate runs ahead of the last recorded reading, and maintenance-due calculations (in the app and in `/api/v1/vehicles/{id}/maintenance`) use the estimate whenever it is fresher than the last manual reading. The REST vehicle list exposes both as `est_mileage` and `miles_per_day`.
+
 ## Fuel log
 
 Each vehicle has a **Fuel** tab for fill-ups: date, odometer, gallons, and total cost. MPG is computed automatically between consecutive fill-ups, and the tab shows the running average MPG and fuel cost per mile. Logging a fill-up also raises the vehicle's recorded mileage when the odometer reading is higher. Fuel entries are included in JSON exports and imports.

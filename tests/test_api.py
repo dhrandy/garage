@@ -8,7 +8,8 @@ def test_shared_garage_and_permissions(tmp_path):
     main.DB_PATH=tmp_path/'garage.db'; main.init_db()
     with TestClient(main.app) as admin:
         assert admin.post('/api/setup',json={'username':'admin-test','password':'password-123'}).status_code==200
-        assert admin.get('/api/vehicles').json() == [{'id': 1, 'name': 'Ford Mustang', 'year': '1969', 'mileage': 0, 'icon': '🚗', 'added_by': 'System', 'created_at': admin.get('/api/vehicles').json()[0]['created_at'], 'updated_at': admin.get('/api/vehicles').json()[0]['updated_at']}]
+        vehicle = admin.get('/api/vehicles').json()[0]
+        assert {k: vehicle[k] for k in ('id','name','year','mileage','icon','added_by')} == {'id': 1, 'name': 'Ford Mustang', 'year': '1969', 'mileage': 0, 'icon': '🚗', 'added_by': 'System'}
         assert admin.post('/api/users',json={'username':'member-test','password':'password-456','is_admin':False}).status_code==200
         service={'vehicle_id':1,'date':'2026-09-20','mileage':24000,'type':'Oil change','cost':55,'provider':'DIY','notes':''}
         assert admin.post('/api/services',json=service).status_code==200
@@ -193,3 +194,26 @@ def test_service_can_reset_maintenance_item(tmp_path):
                              json={'date':'2026-09-21','mileage':24100,'type':'Oil change','reminder_id':reminder['id']})
         assert via_api.status_code == 201
         assert admin.get('/api/reminders?vehicle_id=1').json()[0]['last_mileage'] == 24100
+
+
+def test_estimated_mileage_from_fillups_and_services(tmp_path):
+    main.DB_PATH = tmp_path / 'estimate.db'
+    main._login_failures.clear(); main._api_calls.clear(); main._api_failures.clear()
+    main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup', json={'username':'admin-test','password':'password-123'})
+        admin.post('/api/services', json={'vehicle_id':1,'date':'2026-06-01','mileage':20000,'type':'Tires'})
+        admin.post('/api/fuel', json={'vehicle_id':1,'date':'2026-09-01','odometer':23000,'gallons':10,'cost':35})
+        vehicle = admin.get('/api/vehicles').json()[0]
+        assert vehicle['mileage'] == 23000
+        assert vehicle['miles_per_day'] == 32.6  # 3000 miles over 92 days
+        assert vehicle['est_mileage'] >= 23000
+        with main.db() as c:
+            row = c.execute('SELECT * FROM vehicles WHERE id=1').fetchone()
+            est = main.mileage_estimate(c, 1, today=__import__('datetime').date(2026, 10, 1))
+            assert est['est_mileage'] == 23000 + round(3000/92 * 30)
+            assert main.effective_mileage(c, row) == main.mileage_estimate(c, 1)['est_mileage']
+            status = main.reminder_status(est['est_mileage'], {'miles_interval':3400,'months_interval':None,'last_mileage':20000,'last_date':'2026-06-01'}, today=__import__('datetime').date(2026, 10, 1))
+            assert status['state'] == 'overdue'
+            fresh = main.reminder_status(20000, {'miles_interval':3400,'months_interval':None,'last_mileage':20000,'last_date':'2026-06-01'}, today=__import__('datetime').date(2026, 10, 1))
+            assert fresh['state'] == 'ok'
