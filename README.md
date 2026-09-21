@@ -1,18 +1,27 @@
 # Garage
 
+[![Beta](https://img.shields.io/badge/status-beta-orange)](https://github.com/dhrandy/garage)
+
+Garage is in beta. Things may change between versions - features, data formats, and APIs can shift until a stable release.
+
 Garage is a simple vehicle maintenance tracker. It is self-hosted and multi-user. One shared garage keeps vehicle mileage, service history, maintenance reminders, and costs in sync across phones and computers. It runs as one Docker container with SQLite storage.
 
 ## Quick start
 
-1. Set `GARAGE_SECRET` to a long random value. In Dockhand, enter it directly in the stack Environment tab when you paste the Compose file. No `.env` file is required. Plain Docker Compose users can instead place `GARAGE_SECRET` in a `.env` file beside `docker-compose.yml`. One way to generate a value is `openssl rand -hex 32`.
-2. Start Garage:
+1. Run Garage with Docker, keeping its data in a folder on the host:
+
+   ```sh
+   docker run -d --name garage -p 8917:8000 -v ./data:/app/data ghcr.io/dhrandy/garage:latest
+   ```
+
+   Or with Docker Compose and the included `docker-compose.yml`:
 
    ```sh
    docker compose up -d
    ```
 
-3. Open `http://your-server:8917`.
-4. The first visit shows setup. Create the first account, which becomes the administrator.
+2. Open `http://your-server:8917`.
+3. The first visit shows setup. Create the first account, which becomes the administrator.
 
 Fresh installs start with one example vehicle, a 1969 Mustang, that you can edit or delete.
 
@@ -107,26 +116,15 @@ API requests are rate limited: 100 requests per minute per token, and repeated i
 
 ## Backup and restore
 
-Garage stores all app data in `/app/data/garage.db`. With the included bind mount, the host copy is:
+Garage stores all app data in `/app/data` inside the container: the SQLite database `garage.db` plus uploaded receipt and vehicle photos under `receipts/`. With the included Compose file the host copy is the `./data` folder beside `docker-compose.yml`; with `docker run -v` it is whatever host folder you mount at `/app/data`.
 
-```text
-/DATA/AppData/garage/garage.db
-```
+For a consistent backup, stop the container, copy `garage.db` and the `receipts` folder beside it, then start it again. Restore by stopping Garage and replacing both with the backup. JSON export and import in the app are useful for moving garage records, but they do not include user accounts, login sessions, or photos.
 
-For a consistent backup, stop the container, copy `garage.db` and the `receipts` folder beside it, then start it again. Restore by stopping Garage and replacing both with the backup. JSON export and import in the app are useful for moving garage records, but they do not include user accounts or login sessions.
+## Reverse proxy
 
-## Dockhand / CasaOS
+Garage works behind any HTTPS reverse proxy. The proxy must forward the original `Host`, `X-Forwarded-For`, and `X-Forwarded-Proto` headers. Set `GARAGE_COOKIE_SECURE=true` so session cookies are only sent over HTTPS.
 
-1. In Dockhand, create a stack and paste the contents of `docker-compose.yml`.
-2. Add `GARAGE_SECRET` in Dockhand's Environment tab. No `.env` file is required. Plain Docker Compose users can use a `.env` file beside the Compose file instead.
-3. Deploy the stack.
-4. Open port `8917` on the CasaOS host and complete first-run setup.
-
-## Synology reverse proxy
-
-Garage can sit behind Synology DSM's reverse proxy. Create an HTTPS reverse-proxy rule whose destination is `http://<garage-host>:8917`, enable WebSocket forwarding, and forward the original `Host`, `X-Forwarded-For`, and `X-Forwarded-Proto` headers. Set `GARAGE_COOKIE_SECURE=true` so session cookies are only sent over HTTPS.
-
-Uvicorn honors forwarded headers only from trusted proxy addresses. Set `FORWARDED_ALLOW_IPS` to the Synology proxy's IP address (or a narrow trusted CIDR), for example:
+Uvicorn honors forwarded headers only from trusted proxy addresses, so set `FORWARDED_ALLOW_IPS` to the proxy's IP address (or a narrow trusted CIDR). Do not use `FORWARDED_ALLOW_IPS=*` when Garage's port is reachable by untrusted clients. Example environment:
 
 ```yaml
 environment:
@@ -134,21 +132,55 @@ environment:
   - FORWARDED_ALLOW_IPS=192.168.1.10
 ```
 
-Do not use `FORWARDED_ALLOW_IPS=*` when port `8917` is reachable by untrusted clients. Keep the SQLite data directory outside any reverse-proxy static-file root.
+### nginx
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8917;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+### Caddy
+
+```caddy
+garage.example.com {
+    reverse_proxy 127.0.0.1:8917
+}
+```
+
+Caddy forwards `Host` and `X-Forwarded-*` headers automatically.
+
+### Traefik
+
+```yaml
+labels:
+  - traefik.http.routers.garage.rule=Host(`garage.example.com`)
+  - traefik.http.services.garage.loadbalancer.server.port=8917
+```
+
+### Synology DSM
+
+Create an HTTPS reverse-proxy rule whose destination is `http://<garage-host>:8917` and forward the original `Host`, `X-Forwarded-For`, and `X-Forwarded-Proto` headers.
+
+## Dockhand, CasaOS, and other Docker GUIs
+
+Any Docker GUI that can run a Compose file works. In Dockhand, for example: create a stack, paste the contents of `docker-compose.yml`, adjust the volume path to a folder your host exposes, deploy, then open port `8917` and complete first-run setup.
+
+## Building locally
 
 The Compose file pulls `ghcr.io/dhrandy/garage:latest`. To build locally instead, run:
 
 ```sh
 docker build -t garage:local .
-docker run -d --name garage -p 8917:8000 \
-  -e GARAGE_SECRET="$(openssl rand -hex 32)" \
-  -v /DATA/AppData/garage:/app/data \
-  garage:local
+docker run -d --name garage -p 8917:8000 -v ./data:/app/data garage:local
 ```
 
 ## Security notes
 
-Passwords use PBKDF2-HMAC-SHA256 with a unique random salt and 260,000 iterations. Login state uses random, server-stored session tokens in an HTTP-only, SameSite cookie. Set `GARAGE_COOKIE_SECURE=true` when Garage is served through HTTPS. The setup route closes automatically after the first account is created.
+Passwords use PBKDF2-HMAC-SHA256 with a unique random salt and 260,000 iterations. Login state uses random, server-stored session tokens in an HTTP-only, SameSite cookie, so there is no signing secret to configure; `GARAGE_SECRET`, accepted by older deployment examples, is not read by the app. Set `GARAGE_COOKIE_SECURE=true` when Garage is served through HTTPS. The setup route closes automatically after the first account is created. API tokens are stored as SHA-256 hashes. Notification URLs contain service credentials and are only visible to administrators.
 
 ## License
 

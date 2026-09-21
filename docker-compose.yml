@@ -5,9 +5,8 @@ services:
     restart: unless-stopped
     working_dir: /app
     volumes:
-      - /DATA/AppData/garage:/app/data
+      - ./data:/app/data
     environment:
-      - TZ=America/New_York
-      - GARAGE_SECRET=${GARAGE_SECRET}
+      - TZ=${TZ:-UTC}
     ports:
       - 8917:8000
