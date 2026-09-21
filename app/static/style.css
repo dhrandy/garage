@@ -4,3 +4,4 @@
 .brand-mark{width:40px;height:40px;object-fit:contain;display:block}.settings-card{padding:20px;max-width:560px}.settings-card form{margin:0}.settings-card .hint{font-size:13px;margin-top:6px}
 @media(max-width:650px){.topbar [data-action=settings]:after{content:'Set'}.brand-mark{width:40px;height:40px}}
 .receipts{display:flex;gap:9px;flex-wrap:wrap;margin-top:11px}.receipts img{width:66px;height:66px;object-fit:cover;border-radius:9px;border:1px solid var(--line);display:block}.receipt{position:relative}.receipt>.small{position:absolute;top:-7px;right:-7px;min-width:26px;min-height:26px;width:26px;height:26px;padding:0;border-radius:50%;line-height:1}
+.token-list{margin-top:14px;border:1px solid var(--line);border-radius:11px;overflow:hidden}

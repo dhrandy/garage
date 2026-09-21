@@ -10,7 +10,7 @@ import threading
 import time
 from contextlib import contextmanager
 from collections import defaultdict, deque
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -32,8 +32,15 @@ SESSION_DAYS = 30
 PBKDF2_ITERATIONS = 260_000
 LOGIN_LIMIT = 5
 LOGIN_WINDOW_SECONDS = 15 * 60
+API_LIMIT = 100
+API_WINDOW_SECONDS = 60
+API_FAIL_LIMIT = 5
+API_FAIL_WINDOW_SECONDS = 15 * 60
 _login_failures: dict[str, deque[float]] = defaultdict(deque)
 _login_lock = threading.Lock()
+_api_calls: dict[str, deque[float]] = defaultdict(deque)
+_api_failures: dict[str, deque[float]] = defaultdict(deque)
+_api_lock = threading.Lock()
 
 app = FastAPI(title="Garage", version="2.0.0", docs_url="/api/docs", openapi_url="/api/openapi.json")
 
@@ -69,6 +76,28 @@ def record_login_failure(ip: str) -> None:
 def clear_login_failures(ip: str) -> None:
     with _login_lock:
         _login_failures.pop(ip, None)
+
+def _window_allows(hits: deque[float], limit: int, window: int, count: bool) -> int:
+    now = time.monotonic()
+    while hits and now - hits[0] >= window:
+        hits.popleft()
+    if len(hits) >= limit:
+        return max(1, int(window - (now - hits[0])) + 1)
+    if count:
+        hits.append(now)
+    return 0
+
+def api_call_allowed(token_hash: str) -> int:
+    with _api_lock:
+        return _window_allows(_api_calls[token_hash], API_LIMIT, API_WINDOW_SECONDS, True)
+
+def api_failure_retry_after(ip: str) -> int:
+    with _api_lock:
+        return _window_allows(_api_failures[ip], API_FAIL_LIMIT, API_FAIL_WINDOW_SECONDS, False)
+
+def record_api_failure(ip: str) -> None:
+    with _api_lock:
+        _api_failures[ip].append(time.monotonic())
 
 @contextmanager
 def db():
@@ -141,6 +170,16 @@ def init_db():
           logged_by INTEGER NOT NULL REFERENCES users(id),
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS api_tokens (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          token_hash TEXT NOT NULL UNIQUE,
+          prefix TEXT NOT NULL,
+          created_by INTEGER REFERENCES users(id),
+          created_at TEXT NOT NULL,
+          last_used_at TEXT,
+          revoked INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS receipts (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -535,6 +574,35 @@ def delete_receipt(receipt_id: int, request: Request):
         c.execute("DELETE FROM receipts WHERE id=?", (receipt_id,))
     return {"ok": True}
 
+def get_vehicle_or_404(c, vehicle_id: int) -> sqlite3.Row:
+    row = c.execute("SELECT * FROM vehicles WHERE id=?", (vehicle_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Vehicle not found")
+    return row
+
+def reminder_status(mileage: int, r, today: date | None = None) -> dict[str, Any]:
+    today = today or datetime.now(timezone.utc).date()
+    progress: list[float] = []
+    labels: list[str] = []
+    if r["miles_interval"]:
+        due = r["last_mileage"] + r["miles_interval"]
+        progress.append((mileage - r["last_mileage"]) / r["miles_interval"])
+        labels.append(f"{max(0, due - mileage):,} mi remaining")
+    if r["months_interval"]:
+        last = datetime.strptime(r["last_date"], "%Y-%m-%d").date()
+        month_index = last.month - 1 + r["months_interval"]
+        year = last.year + month_index // 12
+        month = month_index % 12 + 1
+        days_in_month = [31, 29 if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]
+        due_date = date(year, month, min(last.day, days_in_month))
+        total = (due_date - last).days
+        progress.append((today - last).days / total if total > 0 else 1)
+        days_left = (due_date - today).days
+        labels.append(f"{days_left} days remaining" if days_left >= 0 else f"{-days_left} days late")
+    p = max(progress) if progress else 0
+    state = "overdue" if p >= 1 else "soon" if p >= 0.8 else "ok"
+    return {"state": state, "progress": min(1, p), "label": " · ".join(labels) or "No schedule"}
+
 def reminder_dict(row):
     return {"id":row["id"],"vehicle_id":row["vehicle_id"],"name":row["name"],"miles_interval":row["miles_interval"],
             "months_interval":row["months_interval"],"last_date":row["last_date"],"last_mileage":row["last_mileage"]}
@@ -625,6 +693,138 @@ def update_user(item_id:int,body:UserUpdate,request:Request):
         except sqlite3.IntegrityError:raise HTTPException(409,"Username already exists")
         if not active:c.execute("DELETE FROM sessions WHERE user_id=?",(item_id,))
         return public_user(c.execute("SELECT * FROM users WHERE id=?",(item_id,)).fetchone())
+
+def token_dict(row, raw: str | None = None) -> dict[str, Any]:
+    out = {"id": row["id"], "name": row["name"], "prefix": row["prefix"], "created_at": row["created_at"], "last_used_at": row["last_used_at"]}
+    if raw is not None:
+        out["token"] = raw
+    return out
+
+class TokenIn(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+
+@app.get("/api/tokens")
+def list_tokens(request: Request):
+    current_user(request, True)
+    with db() as c:
+        return [token_dict(r) for r in c.execute("SELECT * FROM api_tokens ORDER BY id")]
+
+@app.post("/api/tokens", status_code=201)
+def create_token(body: TokenIn, request: Request):
+    user = current_user(request, True)
+    raw = "gar_" + secrets.token_urlsafe(32)
+    with db() as c:
+        cur = c.execute("INSERT INTO api_tokens(name,token_hash,prefix,created_by,created_at) VALUES(?,?,?,?,?)",
+                        (body.name.strip(), hashlib.sha256(raw.encode()).hexdigest(), raw[:11], user["id"], now_iso()))
+        return token_dict(c.execute("SELECT * FROM api_tokens WHERE id=?", (cur.lastrowid,)).fetchone(), raw)
+
+@app.delete("/api/tokens/{item_id}")
+def revoke_token(item_id: int, request: Request):
+    current_user(request, True)
+    with db() as c:
+        if not c.execute("DELETE FROM api_tokens WHERE id=?", (item_id,)).rowcount:
+            raise HTTPException(404, "Token not found")
+    return {"ok": True}
+
+def token_auth(request: Request) -> sqlite3.Row:
+    auth = request.headers.get("authorization", "")
+    if not auth.lower().startswith("bearer "):
+        raise HTTPException(401, "Missing bearer token", headers={"WWW-Authenticate": "Bearer"})
+    token_hash = hashlib.sha256(auth[7:].strip().encode()).hexdigest()
+    with db() as c:
+        row = c.execute("SELECT * FROM api_tokens WHERE token_hash=?", (token_hash,)).fetchone()
+    if not row:
+        ip = client_ip(request)
+        retry = api_failure_retry_after(ip)
+        if retry:
+            raise HTTPException(429, "Too many failed API attempts. Try again later.", headers={"Retry-After": str(retry)})
+        record_api_failure(ip)
+        raise HTTPException(401, "Invalid API token", headers={"WWW-Authenticate": "Bearer"})
+    retry = api_call_allowed(token_hash)
+    if retry:
+        raise HTTPException(429, "API rate limit exceeded. Try again later.", headers={"Retry-After": str(retry)})
+    with db() as c:
+        c.execute("UPDATE api_tokens SET last_used_at=? WHERE id=?", (now_iso(), row["id"]))
+    return row
+
+class ServiceV1In(BaseModel):
+    date: str
+    mileage: int = Field(default=0, ge=0)
+    type: str = Field(min_length=1, max_length=100)
+    cost: float = Field(default=0, ge=0)
+    provider: str = Field(default="", max_length=100)
+    notes: str = Field(default="", max_length=1000)
+
+@app.get("/api/v1/vehicles")
+def v1_list_vehicles(request: Request):
+    token_auth(request)
+    with db() as c:
+        return [vehicle_dict(c, r) for r in c.execute("SELECT * FROM vehicles ORDER BY id")]
+
+@app.get("/api/v1/vehicles/{vehicle_id}/services")
+def v1_list_services(vehicle_id: int, request: Request):
+    token_auth(request)
+    with db() as c:
+        get_vehicle_or_404(c, vehicle_id)
+        rows = c.execute("SELECT * FROM services WHERE vehicle_id=? ORDER BY service_date DESC,id DESC", (vehicle_id,))
+        return [service_dict(c, r) for r in rows]
+
+@app.get("/api/v1/vehicles/{vehicle_id}/maintenance")
+def v1_maintenance(vehicle_id: int, request: Request):
+    token_auth(request)
+    with db() as c:
+        v = get_vehicle_or_404(c, vehicle_id)
+        out = []
+        for r in c.execute("SELECT * FROM reminders WHERE vehicle_id=? ORDER BY id", (vehicle_id,)):
+            st = reminder_status(v["mileage"], r)
+            out.append({**reminder_dict(r), "status": st["state"], "progress": st["progress"], "label": st["label"]})
+        return out
+
+@app.get("/api/v1/vehicles/{vehicle_id}/fuel")
+def v1_list_fuel(vehicle_id: int, request: Request):
+    token_auth(request)
+    with db() as c:
+        get_vehicle_or_404(c, vehicle_id)
+        return fuel_rows(c, vehicle_id)
+
+@app.post("/api/v1/vehicles/{vehicle_id}/services", status_code=201)
+def v1_add_service(vehicle_id: int, body: ServiceV1In, request: Request):
+    token = token_auth(request); stamp = now_iso()
+    with db() as c:
+        get_vehicle_or_404(c, vehicle_id)
+        cur = c.execute("""INSERT INTO services(vehicle_id,service_date,mileage,service_type,cost,provider,notes,logged_by,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,?,?)""", (vehicle_id, body.date, body.mileage, body.type.strip(), body.cost, body.provider.strip(), body.notes.strip(), token["created_by"], stamp, stamp))
+        c.execute("UPDATE vehicles SET mileage=MAX(mileage,?),updated_at=? WHERE id=?", (body.mileage, stamp, vehicle_id))
+        return service_dict(c, c.execute("SELECT * FROM services WHERE id=?", (cur.lastrowid,)).fetchone())
+
+@app.post("/api/v1/vehicles/{vehicle_id}/fuel", status_code=201)
+async def v1_add_fuel(vehicle_id: int, request: Request, date: str = Form(...), odometer: int = Form(..., ge=0),
+                      gallons: float = Form(..., gt=0), cost: float = Form(0, ge=0), file: UploadFile | None = File(None)):
+    token = token_auth(request); stamp = now_iso()
+    data = await file.read() if file else b""
+    mime = (file.content_type or "").lower() if file else ""
+    if file and data:
+        if mime not in RECEIPT_TYPES:
+            raise HTTPException(400, "Receipt photos must be JPEG, PNG, WebP, GIF, or HEIC images")
+        if len(data) > RECEIPT_MAX_BYTES:
+            raise HTTPException(400, "Receipt photos are limited to 10 MB")
+    with db() as c:
+        get_vehicle_or_404(c, vehicle_id)
+        cur = c.execute("INSERT INTO fuel_entries(vehicle_id,fill_date,odometer,gallons,cost,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                        (vehicle_id, date, odometer, gallons, cost, token["created_by"], stamp, stamp))
+        fuel_id = cur.lastrowid
+        c.execute("UPDATE vehicles SET mileage=MAX(mileage,?),updated_at=? WHERE id=?", (odometer, stamp, vehicle_id))
+        receipt = None
+        if file and data:
+            stored = f"{secrets.token_hex(16)}{RECEIPT_TYPES[mime]}"
+            (RECEIPTS_DIR / stored).write_bytes(data)
+            rcur = c.execute("INSERT INTO receipts(kind,entry_id,stored_name,orig_name,mime,size,uploaded_by,created_at) VALUES('fuel',?,?,?,?,?,?,?)",
+                             (fuel_id, stored, (file.filename or "")[:120], mime, len(data), token["created_by"], stamp))
+            receipt = receipt_dict(c, c.execute("SELECT * FROM receipts WHERE id=?", (rcur.lastrowid,)).fetchone())
+        entry = one_fuel(c, fuel_id)
+        if receipt:
+            entry["receipt"] = receipt
+        return entry
 
 @app.get("/api/export")
 def export_data(request:Request):

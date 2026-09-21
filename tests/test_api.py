@@ -100,7 +100,7 @@ def test_fuel_log_computes_mpg_and_bumps_mileage(tmp_path):
 
 PNG_BYTES = __import__('base64').b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')
 
-Add receipt photo uploads for service and fuel entriesdef test_receipt_upload_view_delete(tmp_path):
+def test_receipt_upload_view_delete(tmp_path):
     main.DB_PATH = tmp_path / 'receipts.db'
     main.RECEIPTS_DIR = tmp_path / 'receipts'
     main.RECEIPTS_DIR.mkdir(exist_ok=True)
@@ -125,3 +125,50 @@ Add receipt photo uploads for service and fuel entriesdef test_receipt_upload_vi
         assert admin.delete(f"/api/receipts/{remaining[0]['id']}").status_code == 200
     with TestClient(main.app) as anon:
         assert anon.get('/api/receipts').status_code == 401
+
+
+def test_api_tokens_and_v1_endpoints(tmp_path):
+    main.DB_PATH = tmp_path / 'tokens.db'
+    main.RECEIPTS_DIR = tmp_path / 'receipts'
+    main.RECEIPTS_DIR.mkdir(exist_ok=True)
+    main._login_failures.clear(); main._api_calls.clear(); main._api_failures.clear()
+    main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup', json={'username':'admin-test','password':'password-123'})
+        created = admin.post('/api/tokens', json={'name':'script'})
+        assert created.status_code == 201
+        token = created.json()['token']
+        assert token.startswith('gar_') and created.json()['prefix'] == token[:11]
+        assert 'token' not in admin.get('/api/tokens').json()[0]
+        admin.post('/api/users', json={'username':'member-test','password':'password-456','is_admin':False})
+        auth = {'Authorization': f'Bearer {token}'}
+        assert admin.get('/api/v1/vehicles', headers=auth).json()[0]['name'] == 'Ford Mustang'
+        service = admin.post('/api/v1/vehicles/1/services', headers=auth, json={'date':'2026-09-20','mileage':24000,'type':'Oil change','cost':55})
+        assert service.status_code == 201 and service.json()['logged_by'] == 'admin-test'
+        assert len(admin.get('/api/v1/vehicles/1/services', headers=auth).json()) == 1
+        fuel = admin.post('/api/v1/vehicles/1/fuel', headers=auth, data={'date':'2026-09-20','odometer':'24000','gallons':'10','cost':'35'}, files={'file':('receipt.png', PNG_BYTES, 'image/png')})
+        assert fuel.status_code == 201 and fuel.json()['receipt']['mime'] == 'image/png'
+        assert len(admin.get('/api/v1/vehicles/1/fuel', headers=auth).json()) == 1
+        admin.post('/api/reminders', json={'vehicle_id':1,'name':'Oil change','miles_interval':5000,'months_interval':None,'last_date':'2026-09-01','last_mileage':20000})
+        status = admin.get('/api/v1/vehicles/1/maintenance', headers=auth).json()
+        assert status[0]['status'] == 'soon' and status[0]['label'] == '1,000 mi remaining'
+        assert admin.get('/api/v1/vehicles', headers={'Authorization':'Bearer gar_wrong'}).status_code == 401
+        tid = created.json()['id']
+        assert admin.delete(f'/api/tokens/{tid}').status_code == 200
+        assert admin.get('/api/v1/vehicles', headers=auth).status_code == 401
+    with TestClient(main.app) as member:
+        member.post('/api/login', json={'username':'member-test','password':'password-456'})
+        assert member.get('/api/tokens').status_code == 403
+        assert member.post('/api/tokens', json={'name':'x'}).status_code == 403
+
+
+def test_api_invalid_token_rate_limit(tmp_path):
+    main.DB_PATH = tmp_path / 'api-limit.db'
+    main._login_failures.clear(); main._api_calls.clear(); main._api_failures.clear()
+    main.init_db()
+    with TestClient(main.app) as client:
+        client.post('/api/setup', json={'username':'admin-test','password':'password-123'})
+        for _ in range(main.API_FAIL_LIMIT):
+            assert client.get('/api/v1/vehicles', headers={'Authorization':'Bearer gar_wrong'}).status_code == 401
+        response = client.get('/api/v1/vehicles', headers={'Authorization':'Bearer gar_wrong'})
+        assert response.status_code == 429 and int(response.headers['retry-after']) > 0

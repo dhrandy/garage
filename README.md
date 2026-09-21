@@ -43,6 +43,42 @@ ports:
   - 8917:8000
 ```
 
+## REST API tokens
+
+Scripts and integrations can use token-authenticated REST endpoints under `/api/v1`. Administrators create named tokens in **Settings → API tokens**. The full token is shown once at creation; Garage stores only its SHA-256 hash. Revoking a token disables it immediately. Interactive OpenAPI docs are at `/api/docs` on your server.
+
+Send the token as a bearer header:
+
+```sh
+curl -H "Authorization: Bearer gar_..." http://your-server:8917/api/v1/vehicles
+```
+
+Endpoints (all relative to `http://your-server:8917`):
+
+- `GET /api/v1/vehicles` — list vehicles with recorded and estimated mileage
+- `GET /api/v1/vehicles/{id}/services` — service history
+- `GET /api/v1/vehicles/{id}/maintenance` — maintenance items with `status` (`ok`, `soon`, `overdue`) and a human-readable `label`
+- `GET /api/v1/vehicles/{id}/fuel` — fill-up log with per-fill `mpg`
+- `POST /api/v1/vehicles/{id}/services` — log a service entry (JSON)
+- `POST /api/v1/vehicles/{id}/fuel` — log a fill-up (multipart form, optional receipt `file`)
+
+Examples:
+
+```sh
+# Log a service entry
+curl -X POST -H "Authorization: Bearer gar_..." -H "Content-Type: application/json" \
+  -d '{"date":"2026-09-21","mileage":24310,"type":"Oil change","cost":54.99,"provider":"DIY"}' \
+  http://your-server:8917/api/v1/vehicles/1/services
+
+# Log a fill-up with a receipt photo
+curl -X POST -H "Authorization: Bearer gar_..." \
+  -F date=2026-09-21 -F odometer=24310 -F gallons=10.2 -F cost=36.50 \
+  -F file=@receipt.jpg \
+  http://your-server:8917/api/v1/vehicles/1/fuel
+```
+
+API requests are rate limited: 100 requests per minute per token, and repeated invalid tokens from one address are blocked for 15 minutes, mirroring the login protection. `429` responses carry a `Retry-After` header.
+
 ## Backup and restore
 
 Garage stores all app data in `/app/data/garage.db`. With the included bind mount, the host copy is:
@@ -106,3 +142,5 @@ The browser uses a JSON REST API under `/api`. Authentication is cookie-based.
 - `GET /api/export`, `POST /api/import`
 - `GET/PUT /api/settings` (`PUT` is administrator only)
 - `GET/POST /api/users`, `PUT /api/users/{id}` (administrator only)
+- `GET/POST /api/tokens`, `DELETE /api/tokens/{id}` (administrator only)
+- `/api/v1/...` token endpoints (see **REST API tokens**)
