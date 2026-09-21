@@ -51,7 +51,7 @@ def test_admin_can_rename_garage_and_member_cannot(tmp_path):
     main.init_db()
     with TestClient(main.app) as admin:
         admin.post('/api/setup', json={'username':'admin-test','password':'password-123'})
-        assert admin.get('/api/settings').json() == {'garage_name':'Your Garage','hide_service_log':False,'hide_maintenance':False,'hide_costs':False,'hide_fuel':False}
+        assert admin.get('/api/settings').json() == {'garage_name':'Your Garage','hide_service_log':False,'hide_maintenance':False,'hide_costs':False,'hide_fuel':False,'use_vehicle_photos':False}
         assert admin.put('/api/settings', json={'garage_name':'Test Garage'}).json()['garage_name'] == 'Test Garage'
         admin.post('/api/users', json={'username':'member-test','password':'password-456','is_admin':False})
     with TestClient(main.app) as member:
@@ -217,3 +217,26 @@ def test_estimated_mileage_from_fillups_and_services(tmp_path):
             assert status['state'] == 'overdue'
             fresh = main.reminder_status(20000, {'miles_interval':3400,'months_interval':None,'last_mileage':20000,'last_date':'2026-06-01'}, today=__import__('datetime').date(2026, 10, 1))
             assert fresh['state'] == 'ok'
+
+
+def test_vehicle_photos(tmp_path):
+    main.DB_PATH = tmp_path / 'photos.db'
+    main.RECEIPTS_DIR = tmp_path / 'receipts'
+    main.RECEIPTS_DIR.mkdir(exist_ok=True)
+    main._login_failures.clear()
+    main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup', json={'username':'admin-test','password':'password-123'})
+        photo = admin.post('/api/vehicles/1/photo', files={'file':('car.png', PNG_BYTES, 'image/png')})
+        assert photo.status_code == 201
+        vehicle = admin.get('/api/vehicles').json()[0]
+        assert vehicle['photo_receipt_id'] == photo.json()['id']
+        assert vehicle['photo_url'] == f"/api/receipts/{photo.json()['id']}"
+        assert admin.get(vehicle['photo_url']).content == PNG_BYTES
+        assert admin.put('/api/settings', json={'use_vehicle_photos':True}).json()['use_vehicle_photos'] is True
+        replacement = admin.post('/api/vehicles/1/photo', files={'file':('car2.png', PNG_BYTES, 'image/png')}).json()
+        assert admin.get(f"/api/receipts/{photo.json()['id']}").status_code == 404
+        assert admin.get('/api/vehicles').json()[0]['photo_receipt_id'] == replacement['id']
+        assert admin.delete(f"/api/receipts/{replacement['id']}").status_code == 200
+        assert admin.get('/api/vehicles').json()[0]['photo_receipt_id'] is None
+        assert admin.post('/api/vehicles/1/photo', files={'file':('x.txt', b'no', 'text/plain')}).status_code == 400

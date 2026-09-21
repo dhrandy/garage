@@ -307,7 +307,7 @@ class ReminderIn(BaseModel):
     last_date: str
     last_mileage: int = Field(default=0, ge=0)
 
-SETTINGS_KEYS = ("garage_name", "hide_service_log", "hide_maintenance", "hide_costs", "hide_fuel")
+SETTINGS_KEYS = ("garage_name", "hide_service_log", "hide_maintenance", "hide_costs", "hide_fuel", "use_vehicle_photos")
 
 def read_settings(c) -> dict[str, Any]:
     data = {r["key"]: r["value"] for r in c.execute("SELECT key,value FROM settings")}
@@ -322,6 +322,7 @@ class SettingsIn(BaseModel):
     hide_maintenance: bool | None = None
     hide_costs: bool | None = None
     hide_fuel: bool | None = None
+    use_vehicle_photos: bool | None = None
 
 class UserCreate(BaseModel):
     username: str
@@ -407,6 +408,7 @@ def vehicle_dict(c, row):
     est = mileage_estimate(c, row["id"])
     return {"id":row["id"],"name":row["name"],"year":row["year"],"mileage":row["mileage"],"icon":row["icon"],
             "est_mileage":est["est_mileage"],"miles_per_day":est["miles_per_day"],"photo_receipt_id":row["photo_receipt_id"],
+            "photo_url":f"/api/receipts/{row['photo_receipt_id']}" if row["photo_receipt_id"] else None,
             "added_by":display_user(c,row["added_by"]),"created_at":row["created_at"],"updated_at":row["updated_at"]}
 
 @app.get("/api/vehicles")
@@ -430,6 +432,33 @@ def update_vehicle(item_id:int, body:VehicleIn, request:Request):
                       (body.name.strip(),body.year.strip(),body.mileage,body.icon,now_iso(),item_id))
         if not cur.rowcount: raise HTTPException(404,"Vehicle not found")
         return vehicle_dict(c,c.execute("SELECT * FROM vehicles WHERE id=?",(item_id,)).fetchone())
+
+@app.post("/api/vehicles/{item_id}/photo", status_code=201)
+async def upload_vehicle_photo(item_id: int, request: Request, file: UploadFile = File(...)):
+    user = current_user(request)
+    mime = (file.content_type or "").lower()
+    if mime not in RECEIPT_TYPES:
+        raise HTTPException(400, "Vehicle photos must be JPEG, PNG, WebP, GIF, or HEIC images")
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "Empty file")
+    if len(data) > RECEIPT_MAX_BYTES:
+        raise HTTPException(400, "Vehicle photos are limited to 10 MB")
+    with db() as c:
+        v = get_vehicle_or_404(c, item_id)
+        if v["photo_receipt_id"]:
+            old_photo = c.execute("SELECT * FROM receipts WHERE id=?", (v["photo_receipt_id"],)).fetchone()
+            if old_photo:
+                (RECEIPTS_DIR / old_photo["stored_name"]).unlink(missing_ok=True)
+                c.execute("UPDATE vehicles SET photo_receipt_id=NULL WHERE id=?", (item_id,))
+                c.execute("DELETE FROM receipts WHERE id=?", (old_photo["id"],))
+        stored = f"{secrets.token_hex(16)}{RECEIPT_TYPES[mime]}"
+        (RECEIPTS_DIR / stored).write_bytes(data)
+        cur = c.execute("INSERT INTO receipts(kind,entry_id,stored_name,orig_name,mime,size,uploaded_by,created_at) VALUES('vehicle',?,?,?,?,?,?,?)",
+                        (item_id, stored, (file.filename or "")[:120], mime, len(data), user["id"], now_iso()))
+        photo_id = cur.lastrowid
+        c.execute("UPDATE vehicles SET photo_receipt_id=?,updated_at=? WHERE id=?", (photo_id, now_iso(), item_id))
+        return receipt_dict(c, c.execute("SELECT * FROM receipts WHERE id=?", (photo_id,)).fetchone())
 
 @app.delete("/api/vehicles/{item_id}")
 def delete_vehicle(item_id:int, request:Request):

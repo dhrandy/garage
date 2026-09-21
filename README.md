@@ -16,6 +16,10 @@ Garage is a simple vehicle maintenance tracker. It is self-hosted and multi-user
 
 Fresh installs start with one example vehicle, a 1969 Mustang, that you can edit or delete.
 
+## Vehicle photos
+
+Each vehicle can have a photo (uploaded from the vehicle's **Edit** form, with camera capture on phones). Photos are stored under `/app/data/receipts` with receipt images. **Settings → Vehicle photos** controls whether photos replace the emoji icon on vehicle cards and pages; turning it off restores the emoji icons without deleting any photos.
+
 ## Settings
 
 Administrators can open **Settings** to rename the garage. The name is stored in SQLite and appears in the header and on the garage home screen. New installs default to **Your Garage**.
@@ -142,7 +146,7 @@ The browser uses a JSON REST API under `/api`. Authentication is cookie-based.
 
 - `GET /api/status`, `POST /api/setup`
 - `POST /api/login`, `POST /api/logout`, `GET /api/me`
-- `GET/POST /api/vehicles`, `PUT/DELETE /api/vehicles/{id}`
+- `GET/POST /api/vehicles`, `PUT/DELETE /api/vehicles/{id}`, `POST /api/vehicles/{id}/photo` (multipart upload)
 - `GET/POST /api/services`, `PUT/DELETE /api/services/{id}`
 - `GET/POST /api/fuel`, `PUT/DELETE /api/fuel/{id}`
 - `GET/POST /api/receipts`, `GET/DELETE /api/receipts/{id}` (multipart upload)
