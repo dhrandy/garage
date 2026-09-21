@@ -6,7 +6,10 @@ import json
 import os
 import secrets
 import sqlite3
+import threading
+import time
 from contextlib import contextmanager
+from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -23,8 +26,45 @@ DB_PATH = DATA_DIR / "garage.db"
 COOKIE = "garage_session"
 SESSION_DAYS = 30
 PBKDF2_ITERATIONS = 260_000
+LOGIN_LIMIT = 5
+LOGIN_WINDOW_SECONDS = 15 * 60
+_login_failures: dict[str, deque[float]] = defaultdict(deque)
+_login_lock = threading.Lock()
 
 app = FastAPI(title="Garage", version="2.0.0", docs_url="/api/docs", openapi_url="/api/openapi.json")
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
+        "form-action 'self'; object-src 'none'; img-src 'self' data:; "
+        "script-src 'self'; style-src 'self' 'unsafe-inline'"
+    )
+    return response
+
+def client_ip(request: Request) -> str:
+    # Uvicorn replaces request.client only when the connecting proxy is trusted.
+    return request.client.host if request.client else "unknown"
+
+def login_retry_after(ip: str) -> int:
+    now = time.monotonic()
+    with _login_lock:
+        failures = _login_failures[ip]
+        while failures and now - failures[0] >= LOGIN_WINDOW_SECONDS:
+            failures.popleft()
+        return max(0, int(LOGIN_WINDOW_SECONDS - (now - failures[0])) + 1) if len(failures) >= LOGIN_LIMIT else 0
+
+def record_login_failure(ip: str) -> None:
+    with _login_lock:
+        _login_failures[ip].append(time.monotonic())
+
+def clear_login_failures(ip: str) -> None:
+    with _login_lock:
+        _login_failures.pop(ip, None)
 
 @contextmanager
 def db():
@@ -42,6 +82,7 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 def init_db():
+    fresh_install = not DB_PATH.exists()
     with db() as c:
         c.executescript("""
         CREATE TABLE IF NOT EXISTS users (
@@ -94,6 +135,12 @@ def init_db():
           updated_at TEXT NOT NULL
         );
         """)
+        if fresh_install:
+            stamp = now_iso()
+            c.execute(
+                "INSERT INTO vehicles(name,year,mileage,icon,added_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                ("Ford Mustang", "1969", 0, "🚗", None, stamp, stamp),
+            )
 
 @app.on_event("startup")
 def startup():
@@ -207,11 +254,17 @@ def setup(body: Credentials, response: Response):
     return {"ok": True}
 
 @app.post("/api/login")
-def login(body: Credentials, response: Response):
+def login(body: Credentials, request: Request, response: Response):
+    ip = client_ip(request)
+    retry_after = login_retry_after(ip)
+    if retry_after:
+        raise HTTPException(429, "Too many login attempts. Try again later.", headers={"Retry-After": str(retry_after)})
     with db() as c:
         row = c.execute("SELECT * FROM users WHERE username=? COLLATE NOCASE", (body.username.strip(),)).fetchone()
     if not row or not row["active"] or not verify_password(body.password, row["password_hash"], row["salt"]):
+        record_login_failure(ip)
         raise HTTPException(401, "Invalid username or password")
+    clear_login_failures(ip)
     set_session(response, row["id"])
     return {"user": public_user(row)}
 
