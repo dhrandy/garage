@@ -14,7 +14,24 @@ Garage is a simple vehicle maintenance tracker. It is self-hosted and multi-user
    docker run -d --name garage -p 8917:8000 -v ./data:/app/data ghcr.io/dhrandy/garage:latest
    ```
 
-   Or with Docker Compose and the included `docker-compose.yml`:
+   Or with Docker Compose. Save this as `docker-compose.yml` (the repo includes the same file):
+
+   ```yaml
+   services:
+     garage:
+       image: ghcr.io/dhrandy/garage:latest
+       container_name: garage
+       restart: unless-stopped
+       working_dir: /app
+       volumes:
+         - ./data:/app/data
+       environment:
+         - TZ=${TZ:-UTC}
+       ports:
+         - 8917:8000
+   ```
+
+   `GARAGE_SECRET` from older examples is optional and currently unused by the app. Then start it:
 
    ```sh
    docker compose up -d
@@ -113,6 +130,18 @@ curl -X POST -H "Authorization: Bearer gar_..." \
 ```
 
 API requests are rate limited: 100 requests per minute per token, and repeated invalid tokens from one address are blocked for 15 minutes, mirroring the login protection. `429` responses carry a `Retry-After` header.
+
+## Use with an AI assistant
+
+The REST API works well with AI assistants that can make HTTP requests.
+
+1. Create a token in **Settings → API tokens** (administrator account).
+2. Give your assistant your Garage server URL and the token, and tell it what you want. For example:
+   - "Add a fuel fill-up to my truck: date 2026-09-21, odometer 24310, gallons 10.2, cost $36.50, receipt attached"
+   - "What maintenance is due on my vehicles?"
+3. Point it at the interactive OpenAPI docs at `/api/docs` on your server so it can learn the exact endpoints and payloads.
+
+A token is a password: do not paste it in public chats or repositories, prefer HTTPS so it is not sent in plain text, and revoke it in Settings if it is ever exposed.
 
 ## Backup and restore
 
