@@ -172,6 +172,15 @@ def init_db():
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS notes (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+          note_date TEXT NOT NULL,
+          body TEXT NOT NULL,
+          logged_by INTEGER NOT NULL REFERENCES users(id),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS api_tokens (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           name TEXT NOT NULL,
@@ -310,7 +319,7 @@ class ReminderIn(BaseModel):
     last_date: str
     last_mileage: int = Field(default=0, ge=0)
 
-SETTINGS_KEYS = ("garage_name", "hide_service_log", "hide_maintenance", "hide_costs", "hide_fuel", "use_vehicle_photos")
+SETTINGS_KEYS = ("garage_name", "hide_service_log", "hide_maintenance", "hide_costs", "hide_fuel", "hide_notes", "use_vehicle_photos")
 
 def read_settings(c) -> dict[str, Any]:
     data = {r["key"]: r["value"] for r in c.execute("SELECT key,value FROM settings")}
@@ -325,6 +334,7 @@ class SettingsIn(BaseModel):
     hide_maintenance: bool | None = None
     hide_costs: bool | None = None
     hide_fuel: bool | None = None
+    hide_notes: bool | None = None
     use_vehicle_photos: bool | None = None
 
 class UserCreate(BaseModel):
@@ -817,6 +827,49 @@ def token_auth(request: Request) -> sqlite3.Row:
         c.execute("UPDATE api_tokens SET last_used_at=? WHERE id=?", (now_iso(), row["id"]))
     return row
 
+
+class NoteIn(BaseModel):
+    vehicle_id: int
+    date: str
+    body: str = Field(min_length=1, max_length=2000)
+
+def note_dict(c, row):
+    return {"id": row["id"], "vehicle_id": row["vehicle_id"], "date": row["note_date"], "body": row["body"],
+            "logged_by": display_user(c, row["logged_by"]), "logged_by_id": row["logged_by"],
+            "created_at": row["created_at"], "updated_at": row["updated_at"]}
+
+@app.get("/api/notes")
+def list_notes(request: Request, vehicle_id: int | None = None):
+    current_user(request)
+    with db() as c:
+        rows = c.execute("SELECT * FROM notes WHERE (? IS NULL OR vehicle_id=?) ORDER BY note_date DESC,id DESC", (vehicle_id, vehicle_id))
+        return [note_dict(c, r) for r in rows]
+
+@app.post("/api/notes", status_code=201)
+def add_note(body: NoteIn, request: Request):
+    user = current_user(request); stamp = now_iso()
+    with db() as c:
+        if not c.execute("SELECT 1 FROM vehicles WHERE id=?", (body.vehicle_id,)).fetchone(): raise HTTPException(404, "Vehicle not found")
+        cur = c.execute("INSERT INTO notes(vehicle_id,note_date,body,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+                        (body.vehicle_id, body.date, body.body.strip(), user["id"], stamp, stamp))
+        return note_dict(c, c.execute("SELECT * FROM notes WHERE id=?", (cur.lastrowid,)).fetchone())
+
+@app.put("/api/notes/{item_id}")
+def update_note(item_id: int, body: NoteIn, request: Request):
+    current_user(request)
+    with db() as c:
+        cur = c.execute("UPDATE notes SET vehicle_id=?,note_date=?,body=?,updated_at=? WHERE id=?",
+                        (body.vehicle_id, body.date, body.body.strip(), now_iso(), item_id))
+        if not cur.rowcount: raise HTTPException(404, "Note not found")
+        return note_dict(c, c.execute("SELECT * FROM notes WHERE id=?", (item_id,)).fetchone())
+
+@app.delete("/api/notes/{item_id}")
+def delete_note(item_id: int, request: Request):
+    current_user(request)
+    with db() as c:
+        if not c.execute("DELETE FROM notes WHERE id=?", (item_id,)).rowcount: raise HTTPException(404, "Note not found")
+    return {"ok": True}
+
 class ServiceV1In(BaseModel):
     date: str
     mileage: int = Field(default=0, ge=0)
@@ -898,6 +951,28 @@ async def v1_add_fuel(vehicle_id: int, request: Request, date: str = Form(...), 
         if receipt:
             entry["receipt"] = receipt
         return entry
+
+
+class NoteV1In(BaseModel):
+    date: str
+    body: str = Field(min_length=1, max_length=2000)
+
+@app.get("/api/v1/vehicles/{vehicle_id}/notes")
+def v1_list_notes(vehicle_id: int, request: Request):
+    token_auth(request)
+    with db() as c:
+        get_vehicle_or_404(c, vehicle_id)
+        rows = c.execute("SELECT * FROM notes WHERE vehicle_id=? ORDER BY note_date DESC,id DESC", (vehicle_id,))
+        return [note_dict(c, r) for r in rows]
+
+@app.post("/api/v1/vehicles/{vehicle_id}/notes", status_code=201)
+def v1_add_note(vehicle_id: int, body: NoteV1In, request: Request):
+    token = token_auth(request); stamp = now_iso()
+    with db() as c:
+        get_vehicle_or_404(c, vehicle_id)
+        cur = c.execute("INSERT INTO notes(vehicle_id,note_date,body,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+                        (vehicle_id, body.date, body.body.strip(), token["created_by"], stamp, stamp))
+        return note_dict(c, c.execute("SELECT * FROM notes WHERE id=?", (cur.lastrowid,)).fetchone())
 
 def send_notification(urls: str, title: str, body: str) -> tuple[bool, str]:
     targets = urls.split()

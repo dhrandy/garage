@@ -50,7 +50,7 @@ Each vehicle can have a photo (uploaded from the vehicle's **Edit** form, with c
 
 Administrators can open **Settings** to rename the garage. The name is stored in SQLite and appears in the header and on the garage home screen. New installs default to **Your Garage**.
 
-Settings also has **Vehicle page sections** checkboxes to hide the Service log, Maintenance, Fuel, and Costs sections. Hidden sections disappear from every vehicle page for all users. The choices are stored in SQLite and apply to everyone, including non-administrators.
+Settings also has **Vehicle page sections** checkboxes to hide the Service log, Maintenance, Fuel, Costs, and Notes sections. Hidden sections disappear from every vehicle page for all users. The choices are stored in SQLite and apply to everyone, including non-administrators.
 
 ## Maintenance reminders and service logging
 
@@ -63,6 +63,10 @@ Garage learns each vehicle's driving pace from dated odometer readings in servic
 ## Fuel log
 
 Each vehicle has a **Fuel** tab for fill-ups: date, odometer, gallons, and total cost. MPG is computed automatically between consecutive fill-ups, and the tab shows the running average MPG and fuel cost per mile. Logging a fill-up also raises the vehicle's recorded mileage when the odometer reading is higher. Fuel entries are included in JSON exports and imports.
+
+## Notes
+
+Each vehicle has a **Notes** tab for freeform dated notes: things like tire pressures, part numbers, or reminders to yourself. Notes are a simple dated list that any user can add to, edit, and delete, and each note shows who wrote it. The tab can be hidden in Settings, and notes are available over the REST API (`GET`/`POST /api/v1/vehicles/{id}/notes`) so scripts and AI assistants can read and write them.
 
 ## Receipt photos
 
@@ -111,8 +115,10 @@ Endpoints (all relative to `http://your-server:8917`):
 - `GET /api/v1/vehicles/{id}/services` — service history
 - `GET /api/v1/vehicles/{id}/maintenance` — maintenance items with `status` (`ok`, `soon`, `overdue`) and a human-readable `label`
 - `GET /api/v1/vehicles/{id}/fuel` — fill-up log with per-fill `mpg`
+- `GET /api/v1/vehicles/{id}/notes` — dated freeform notes
 - `POST /api/v1/vehicles/{id}/services` — log a service entry (JSON)
 - `POST /api/v1/vehicles/{id}/fuel` — log a fill-up (multipart form, optional receipt `file`)
+- `POST /api/v1/vehicles/{id}/notes` — add a note (JSON: `date`, `body`)
 
 Examples:
 
@@ -226,6 +232,7 @@ The browser uses a JSON REST API under `/api`. Authentication is cookie-based.
 - `GET/POST /api/fuel`, `PUT/DELETE /api/fuel/{id}`
 - `GET/POST /api/receipts`, `GET/DELETE /api/receipts/{id}` (multipart upload)
 - `GET/POST /api/reminders`, `PUT/DELETE /api/reminders/{id}`
+- `GET/POST /api/notes`, `PUT/DELETE /api/notes/{id}`
 - `GET /api/export`, `POST /api/import`
 - `GET/PUT /api/settings` (`PUT` is administrator only)
 - `GET/POST /api/users`, `PUT /api/users/{id}` (administrator only)

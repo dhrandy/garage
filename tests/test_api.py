@@ -52,7 +52,7 @@ def test_admin_can_rename_garage_and_member_cannot(tmp_path):
     main.init_db()
     with TestClient(main.app) as admin:
         admin.post('/api/setup', json={'username':'admin-test','password':'password-123'})
-        assert admin.get('/api/settings').json() == {'garage_name':'Your Garage','hide_service_log':False,'hide_maintenance':False,'hide_costs':False,'hide_fuel':False,'use_vehicle_photos':False}
+        assert admin.get('/api/settings').json() == {'garage_name':'Your Garage','hide_service_log':False,'hide_maintenance':False,'hide_costs':False,'hide_fuel':False,'hide_notes':False,'use_vehicle_photos':False}
         assert admin.put('/api/settings', json={'garage_name':'Test Garage'}).json()['garage_name'] == 'Test Garage'
         admin.post('/api/users', json={'username':'member-test','password':'password-456','is_admin':False})
     with TestClient(main.app) as member:
@@ -306,3 +306,28 @@ def test_webhook_fallback_posts_json(tmp_path):
         assert received and __import__('json').loads(received[0]) == {'title':'T','body':'B'}
     finally:
         server.shutdown()
+
+
+def test_vehicle_notes_and_hide_setting(tmp_path):
+    main.DB_PATH = tmp_path / 'notes.db'
+    main._login_failures.clear()
+    main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup', json={'username':'admin-test','password':'password-123'})
+        note = admin.post('/api/notes', json={'vehicle_id':1,'date':'2026-09-21','body':'Tire pressure is 32 psi'}).json()
+        assert note['body'] == 'Tire pressure is 32 psi' and note['logged_by'] == 'admin-test'
+        updated = admin.put(f"/api/notes/{note['id']}", json={'vehicle_id':1,'date':'2026-09-21','body':'Tire pressure is 35 psi'}).json()
+        assert updated['body'] == 'Tire pressure is 35 psi'
+        rows = admin.get('/api/notes?vehicle_id=1').json()
+        assert len(rows) == 1 and rows[0]['body'] == 'Tire pressure is 35 psi'
+        settings = admin.put('/api/settings', json={'hide_notes':True}).json()
+        assert settings['hide_notes'] is True
+        token = admin.post('/api/tokens', json={'name':'notes-script'}).json()['token']
+        auth = {'Authorization': f'Bearer {token}'}
+        v1_note = admin.post('/api/v1/vehicles/1/notes', json={'date':'2026-09-21','body':'Check the spare'}, headers=auth)
+        assert v1_note.status_code == 201
+        v1_rows = admin.get('/api/v1/vehicles/1/notes', headers=auth).json()
+        assert [n['body'] for n in v1_rows] == ['Check the spare', 'Tire pressure is 35 psi']
+        assert admin.get('/api/v1/vehicles/1/notes').status_code == 401
+        assert admin.delete(f"/api/notes/{note['id']}").json() == {'ok': True}
+        assert admin.delete(f"/api/notes/{note['id']}").status_code == 404
