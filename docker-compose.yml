@@ -1,0 +1,13 @@
+services:
+  garage:
+    image: ghcr.io/dhrandy/garage:latest
+    container_name: garage
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - /DATA/AppData/garage:/app/data
+    environment:
+      - TZ=America/New_York
+      - GARAGE_SECRET=${GARAGE_SECRET}
+    ports:
+      - 8917:8000
