@@ -85,6 +85,10 @@ def init_db():
     fresh_install = not DB_PATH.exists()
     with db() as c:
         c.executescript("""
+        CREATE TABLE IF NOT EXISTS settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS users (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           username TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -135,6 +139,7 @@ def init_db():
           updated_at TEXT NOT NULL
         );
         """)
+        c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", ("garage_name", "Your Garage"))
         if fresh_install:
             stamp = now_iso()
             c.execute(
@@ -222,6 +227,9 @@ class ReminderIn(BaseModel):
     months_interval: int | None = Field(default=None, ge=1)
     last_date: str
     last_mileage: int = Field(default=0, ge=0)
+
+class SettingsIn(BaseModel):
+    garage_name: str = Field(min_length=1, max_length=80)
 
 class UserCreate(BaseModel):
     username: str
@@ -388,6 +396,23 @@ def delete_reminder(item_id:int,request:Request):
     with db() as c:
         if not c.execute("DELETE FROM reminders WHERE id=?",(item_id,)).rowcount: raise HTTPException(404,"Reminder not found")
     return {"ok":True}
+
+@app.get("/api/settings")
+def get_settings(request: Request):
+    current_user(request)
+    with db() as c:
+        row = c.execute("SELECT value FROM settings WHERE key='garage_name'").fetchone()
+    return {"garage_name": row[0] if row else "Your Garage"}
+
+@app.put("/api/settings")
+def update_settings(body: SettingsIn, request: Request):
+    current_user(request, True)
+    name = body.garage_name.strip()
+    if not name:
+        raise HTTPException(400, "Garage name is required")
+    with db() as c:
+        c.execute("INSERT INTO settings(key,value) VALUES('garage_name',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (name,))
+    return {"garage_name": name}
 
 @app.get("/api/users")
 def list_users(request:Request):
