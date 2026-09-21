@@ -94,14 +94,6 @@ def init_db():
           updated_at TEXT NOT NULL
         );
         """)
-        count = c.execute("SELECT COUNT(*) FROM vehicles").fetchone()[0]
-        if count == 0:
-            stamp = now_iso()
-            c.executemany(
-                "INSERT INTO vehicles(name,year,mileage,icon,added_by,created_at,updated_at) VALUES(?,?,?,?,NULL,?,?)",
-                [("Ford F-150","2021",0,"🛻",stamp,stamp),("Mazda Miata","2006",0,"🏎️",stamp,stamp),
-                 ("Hyundai Tucson","2023",0,"🚙",stamp,stamp),("Chevrolet Traverse","",0,"🚙",stamp,stamp)]
-            )
 
 @app.on_event("startup")
 def startup():
