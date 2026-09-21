@@ -953,6 +953,19 @@ async def v1_add_fuel(vehicle_id: int, request: Request, date: str = Form(...), 
         return entry
 
 
+
+class MileageV1In(BaseModel):
+    mileage: int = Field(ge=0)
+    date: str | None = None
+
+@app.put("/api/v1/vehicles/{vehicle_id}/mileage")
+def v1_update_mileage(vehicle_id: int, body: MileageV1In, request: Request):
+    token_auth(request)
+    with db() as c:
+        get_vehicle_or_404(c, vehicle_id)
+        c.execute("UPDATE vehicles SET mileage=?,updated_at=? WHERE id=?", (body.mileage, now_iso(), vehicle_id))
+        return vehicle_dict(c, c.execute("SELECT * FROM vehicles WHERE id=?", (vehicle_id,)).fetchone())
+
 class NoteV1In(BaseModel):
     date: str
     body: str = Field(min_length=1, max_length=2000)

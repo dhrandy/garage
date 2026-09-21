@@ -331,3 +331,20 @@ def test_vehicle_notes_and_hide_setting(tmp_path):
         assert admin.get('/api/v1/vehicles/1/notes').status_code == 401
         assert admin.delete(f"/api/notes/{note['id']}").json() == {'ok': True}
         assert admin.delete(f"/api/notes/{note['id']}").status_code == 404
+
+
+def test_v1_mileage_update(tmp_path):
+    main.DB_PATH = tmp_path / 'mileage.db'
+    main._login_failures.clear()
+    main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup', json={'username':'admin-test','password':'password-123'})
+        token = admin.post('/api/tokens', json={'name':'mileage-script'}).json()['token']
+        auth = {'Authorization': f'Bearer {token}'}
+        assert admin.put('/api/v1/vehicles/1/mileage', json={'mileage':25000,'date':'2026-09-21'}).status_code == 401
+        updated = admin.put('/api/v1/vehicles/1/mileage', json={'mileage':25000,'date':'2026-09-21'}, headers=auth).json()
+        assert updated['mileage'] == 25000
+        vehicle = admin.get('/api/v1/vehicles', headers=auth).json()[0]
+        assert vehicle['mileage'] == 25000
+        assert admin.put('/api/v1/vehicles/1/mileage', json={'mileage':-5}, headers=auth).status_code == 422
+        assert admin.put('/api/v1/vehicles/99/mileage', json={'mileage':100}, headers=auth).status_code == 404

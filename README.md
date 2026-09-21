@@ -116,6 +116,7 @@ Endpoints (all relative to `http://your-server:8917`):
 - `GET /api/v1/vehicles/{id}/maintenance` — maintenance items with `status` (`ok`, `soon`, `overdue`) and a human-readable `label`
 - `GET /api/v1/vehicles/{id}/fuel` — fill-up log with per-fill `mpg`
 - `GET /api/v1/vehicles/{id}/notes` — dated freeform notes
+- `PUT /api/v1/vehicles/{id}/mileage` — update the odometer directly (JSON: `mileage`, optional `date`), same as the app's Update mileage button
 - `POST /api/v1/vehicles/{id}/services` — log a service entry (JSON)
 - `POST /api/v1/vehicles/{id}/fuel` — log a fill-up (multipart form, optional receipt `file`)
 - `POST /api/v1/vehicles/{id}/notes` — add a note (JSON: `date`, `body`)
