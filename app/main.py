@@ -51,11 +51,18 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
-    response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
-        "form-action 'self'; object-src 'none'; img-src 'self' data:; "
-        "script-src 'self'; style-src 'self' 'unsafe-inline'"
-    )
+    if request.url.path == "/api/docs":
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; object-src 'none'; "
+            "img-src 'self' data: https://fastapi.tiangolo.com; "
+            "script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net"
+        )
+    else:
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
+            "form-action 'self'; object-src 'none'; img-src 'self' data:; "
+            "script-src 'self'; style-src 'self' 'unsafe-inline'"
+        )
     return response
 
 def client_ip(request: Request) -> str:
