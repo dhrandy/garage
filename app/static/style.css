@@ -9,3 +9,9 @@
 .toggle-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;font-weight:700}.toggle-row input[type=checkbox]{width:18px;height:18px;flex:none;accent-color:var(--accent2)}
 
 .checkbox-inline{display:inline-flex;align-items:center;gap:8px}.checkbox-inline input[type=checkbox]{width:auto;margin:0;flex:none}.field label.checkbox-inline{display:flex;margin-bottom:0;font-weight:700}.toggle-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;font-weight:700}.toggle-row input[type=checkbox]{width:18px;height:18px;flex:none;margin:0;accent-color:var(--accent2)}
+
+/* Header controls */
+.header-menu{position:relative}.icon-btn{font-size:21px;line-height:1;min-width:40px}.menu-panel{display:none;position:absolute;right:0;top:calc(100% + 8px);min-width:170px;padding:7px;background:var(--panel);border:1px solid var(--line);border-radius:11px;box-shadow:var(--shadow);z-index:20}.menu-panel.open{display:grid}.menu-panel button{border:0;background:transparent;color:var(--text);padding:10px 12px;text-align:left;border-radius:7px;font:inherit;font-weight:650;cursor:pointer}.menu-panel button:hover{background:var(--panel2)}
+/* New settings and cost displays */
+.check-row{display:flex!important;align-items:center;gap:10px;margin-bottom:14px!important;font-weight:700;cursor:pointer}.check-row input[type=checkbox]{width:18px!important;height:18px;flex:none;margin:0;padding:0;accent-color:var(--accent2)}.cost-summary{display:grid;grid-template-columns:1fr 1fr;gap:20px}.vc-mpg{margin-top:2px}.vc-cost{display:grid;gap:4px;padding-top:10px;border-top:1px solid var(--line)}.vc-cost>div{display:flex;justify-content:space-between;gap:12px}.vc-cost>div:first-child{color:var(--text)}
+@media(max-width:650px){.icon-btn{font-size:21px;min-width:44px}.menu-panel button{min-height:44px}.cost-summary{gap:20px}}
