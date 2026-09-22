@@ -10,3 +10,4 @@
 
 .cost-summary{gap:20px}.cost-summary>div{min-width:0}.cost-summary>div:last-child{padding-left:20px;border-left:1px solid var(--line)}
 @media(max-width:650px){.cost-summary{display:grid;grid-template-columns:1fr 1fr}.cost-summary>div:last-child{grid-column:1/-1;padding:14px 0 0;border-left:0;border-top:1px solid var(--line)}.cost-summary .cost-total{font-size:25px}}
+
