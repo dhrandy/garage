@@ -472,3 +472,17 @@ def test_service_install_notes_round_trip(tmp_path):
         assert service['fluids']=='5W-30, 5 qt'
         service=admin.put(f"/api/services/{service['id']}",json={**service,'gotchas':''}).json()
         assert service['gotchas']=='' and service['youtube_url'].startswith('https://youtube.com/')
+
+
+def test_private_entry_cannot_be_moved_by_another_member(tmp_path):
+    main.DB_PATH=tmp_path/'entry-move-auth.db'; main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup',json={'username':'admin','password':'password-123'})
+        private=admin.post('/api/vehicles',json={'year':2020,'make':'Private','model':'Car','mileage':1,'private':True}).json()
+        service=admin.post('/api/services',json={'vehicle_id':private['id'],'date':'2026-09-21','mileage':2,'type':'Secret','cost':1}).json()
+        admin.post('/api/users',json={'username':'member','password':'password-123','is_admin':False})
+        public=admin.post('/api/vehicles',json={'year':2021,'make':'Public','model':'Car','mileage':1,'private':False}).json()
+    with TestClient(main.app) as member:
+        member.post('/api/login',json={'username':'member','password':'password-123'})
+        moved={**service,'vehicle_id':public['id']}
+        assert member.put(f"/api/services/{service['id']}",json=moved).status_code==404
