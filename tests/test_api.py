@@ -520,6 +520,7 @@ def test_backup_is_admin_only_and_round_trips_current_fields(tmp_path):
         assert backup['tables']['services'][0]['fluids']=='5 qt' and backup['receipt_files']
         restored=admin.post('/api/import',json=backup)
         assert restored.status_code==200 and restored.json()['version']==3
+        assert admin.post('/api/login',json={'username':'admin','password':'password-123'}).status_code==200
         again=admin.get('/api/export').json()
         assert again['tables']['services'][0]['fluids']=='5 qt' and again['receipt_files']==backup['receipt_files']
     with TestClient(main.app) as member:
