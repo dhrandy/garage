@@ -238,6 +238,7 @@ def init_db():
           last_date TEXT NOT NULL,
           last_mileage INTEGER NOT NULL DEFAULT 0,
           due_date TEXT,
+          repeats_yearly INTEGER NOT NULL DEFAULT 0,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
@@ -260,6 +261,7 @@ def init_db():
             c.execute("UPDATE vehicles SET owner_id=? WHERE owner_id IS NULL", (admin["id"],))
         reminder_columns={r["name"] for r in c.execute("PRAGMA table_info(reminders)")}
         if "due_date" not in reminder_columns: c.execute("ALTER TABLE reminders ADD COLUMN due_date TEXT")
+        if "repeats_yearly" not in reminder_columns: c.execute("ALTER TABLE reminders ADD COLUMN repeats_yearly INTEGER NOT NULL DEFAULT 0")
         fuel_columns={r["name"] for r in c.execute("PRAGMA table_info(fuel_entries)")}
         if "octane" not in fuel_columns: c.execute("ALTER TABLE fuel_entries ADD COLUMN octane TEXT NOT NULL DEFAULT ''")
         if "reminder_id" not in {r["name"] for r in c.execute("PRAGMA table_info(services)")}:
@@ -391,6 +393,7 @@ class ReminderIn(BaseModel):
     last_date: str
     last_mileage: int = Field(default=0, ge=0)
     due_date: str | None = None
+    repeats_yearly: bool = False
 
 SETTINGS_KEYS = ("garage_name", "hide_service_log", "hide_maintenance", "hide_costs", "hide_fuel", "hide_notes", "use_vehicle_photos", "use_kilometers")
 
@@ -797,6 +800,10 @@ def reminder_status(mileage: int, r, today: date | None = None) -> dict[str, Any
         labels.append(f"{days_left} days remaining" if days_left >= 0 else f"{-days_left} days late")
     if r["due_date"]:
         due_date=datetime.strptime(r["due_date"], "%Y-%m-%d").date()
+        if r["repeats_yearly"]:
+            max_day=[31,29 if today.year%4==0 and (today.year%100!=0 or today.year%400==0) else 28,31,30,31,30,31,31,30,31,30,31][due_date.month-1]
+            due_date=date(today.year,due_date.month,min(due_date.day,max_day))
+            if due_date < today: due_date=due_date.replace(year=today.year+1)
         days_left=(due_date-today).days
         progress.append(1 if days_left < 0 else .8 if days_left <= 30 else 0)
         labels.append(f"due {due_date.strftime('%b %-d, %Y')}" if days_left >= 0 else f"{-days_left} days late")
@@ -806,7 +813,7 @@ def reminder_status(mileage: int, r, today: date | None = None) -> dict[str, Any
 
 def reminder_dict(row):
     return {"id":row["id"],"vehicle_id":row["vehicle_id"],"name":row["name"],"miles_interval":row["miles_interval"],
-            "months_interval":row["months_interval"],"last_date":row["last_date"],"last_mileage":row["last_mileage"],"due_date":row["due_date"]}
+            "months_interval":row["months_interval"],"last_date":row["last_date"],"last_mileage":row["last_mileage"],"due_date":row["due_date"],"repeats_yearly":bool(row["repeats_yearly"])}
 
 @app.get("/api/reminders")
 def list_reminders(request:Request,vehicle_id:int|None=None):
@@ -823,8 +830,8 @@ def add_reminder(body:ReminderIn,request:Request):
     stamp=now_iso()
     with db() as c:
         get_visible_vehicle(c,body.vehicle_id,user)
-        cur=c.execute("""INSERT INTO reminders(vehicle_id,name,miles_interval,months_interval,last_date,last_mileage,due_date,created_at,updated_at)
-          VALUES(?,?,?,?,?,?,?,?,?)""",(body.vehicle_id,body.name.strip(),body.miles_interval,body.months_interval,body.last_date,body.last_mileage,body.due_date or None,stamp,stamp))
+        cur=c.execute("""INSERT INTO reminders(vehicle_id,name,miles_interval,months_interval,last_date,last_mileage,due_date,repeats_yearly,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,?,?)""",(body.vehicle_id,body.name.strip(),body.miles_interval,body.months_interval,body.last_date,body.last_mileage,body.due_date or None,int(body.repeats_yearly),stamp,stamp))
         return reminder_dict(c.execute("SELECT * FROM reminders WHERE id=?",(cur.lastrowid,)).fetchone())
 
 @app.put("/api/reminders/{item_id}")
@@ -833,8 +840,8 @@ def update_reminder(item_id:int,body:ReminderIn,request:Request):
     if not body.miles_interval and not body.months_interval and not body.due_date: raise HTTPException(400,"Choose a due date, miles, months, or a combination")
     with db() as c:
         get_visible_vehicle(c,body.vehicle_id,user)
-        cur=c.execute("""UPDATE reminders SET vehicle_id=?,name=?,miles_interval=?,months_interval=?,last_date=?,last_mileage=?,due_date=?,updated_at=? WHERE id=?""",
-          (body.vehicle_id,body.name.strip(),body.miles_interval,body.months_interval,body.last_date,body.last_mileage,body.due_date or None,now_iso(),item_id))
+        cur=c.execute("""UPDATE reminders SET vehicle_id=?,name=?,miles_interval=?,months_interval=?,last_date=?,last_mileage=?,due_date=?,repeats_yearly=?,updated_at=? WHERE id=?""",
+          (body.vehicle_id,body.name.strip(),body.miles_interval,body.months_interval,body.last_date,body.last_mileage,body.due_date or None,int(body.repeats_yearly),now_iso(),item_id))
         if not cur.rowcount: raise HTTPException(404,"Reminder not found")
         return reminder_dict(c.execute("SELECT * FROM reminders WHERE id=?",(item_id,)).fetchone())
 
