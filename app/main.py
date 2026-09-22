@@ -1344,44 +1344,48 @@ def send_test_notification(request: Request):
         raise HTTPException(502, detail or "Notification delivery failed")
     return {"ok": True}
 
+BACKUP_TABLES = ("settings", "users", "vehicles", "services", "fuel_entries", "notes", "modifications", "receipts", "mileage_updates", "reminders")
+BACKUP_DELETE_ORDER = ("receipts", "services", "fuel_entries", "notes", "modifications", "mileage_updates", "reminders", "vehicles", "users", "settings")
+
 @app.get("/api/export")
 def export_data(request:Request):
-    current_user(request)
-    with db() as c:
-        data={"version":2,"exported_at":now_iso(),"vehicles":[vehicle_dict(c,r) for r in c.execute("SELECT * FROM vehicles")],
-              "services":[service_dict(c,r) for r in c.execute("SELECT * FROM services")],
-              "reminders":[reminder_dict(r) for r in c.execute("SELECT * FROM reminders")],
-              "fuel":[r for r in fuel_rows(c)]}
-    return data
+    current_user(request, True)
+    import base64
+    with db() as c: tables={name:[dict(r) for r in c.execute(f"SELECT * FROM {name}")] for name in BACKUP_TABLES}
+    files={}
+    for r in tables["receipts"]:
+        path=RECEIPTS_DIR/r["stored_name"]
+        if path.is_file(): files[r["stored_name"]]=base64.b64encode(path.read_bytes()).decode("ascii")
+    return {"version":3,"exported_at":now_iso(),"tables":tables,"receipt_files":files}
 
 @app.post("/api/import")
 def import_data(payload:dict[str,Any],request:Request):
-    user=current_user(request)
-    vehicles=payload.get("vehicles",[]); services=payload.get("services",[]); reminders=payload.get("reminders",[]); fuel=payload.get("fuel",[])
-    if not isinstance(vehicles,list) or not isinstance(services,list) or not isinstance(reminders,list) or not isinstance(fuel,list): raise HTTPException(400,"Invalid JSON backup")
-    stamp=now_iso(); idmap={}
+    current_user(request, True)
+    import base64
+    if payload.get("version") != 3 or not isinstance(payload.get("tables"),dict) or not isinstance(payload.get("receipt_files",{}),dict): raise HTTPException(400,"Only complete version 3 backups can be restored")
+    tables=payload["tables"]
+    if any(not isinstance(tables.get(name),list) for name in BACKUP_TABLES): raise HTTPException(400,"Backup is missing a required table")
+    with db() as c: schema={name:[r["name"] for r in c.execute(f"PRAGMA table_info({name})")] for name in BACKUP_TABLES}
+    for name in BACKUP_TABLES:
+        allowed=set(schema[name])
+        if any(not isinstance(row,dict) or not set(row).issubset(allowed) for row in tables[name]): raise HTTPException(400,f"Invalid {name} rows")
+    staged={}
+    try:
+        for stored,encoded in payload.get("receipt_files",{}).items():
+            if not isinstance(stored,str) or Path(stored).name != stored: raise ValueError("Invalid receipt filename")
+            staged[stored]=base64.b64decode(encoded,validate=True)
+    except (ValueError,TypeError): raise HTTPException(400,"Invalid receipt file data")
     with db() as c:
-        for r in c.execute("SELECT stored_name FROM receipts"): (RECEIPTS_DIR / r["stored_name"]).unlink(missing_ok=True)
-        c.execute("DELETE FROM receipts");c.execute("DELETE FROM services");c.execute("DELETE FROM reminders");c.execute("DELETE FROM fuel_entries");c.execute("DELETE FROM mileage_updates");c.execute("DELETE FROM vehicles")
-        for v in vehicles:
-            cur=c.execute("INSERT INTO vehicles(name,year,mileage,icon,added_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
-              (str(v.get("name","Vehicle"))[:80],str(v.get("year",""))[:4],max(0,int(v.get("mileage",0))),str(v.get("icon","🚗"))[:8],user["id"],stamp,stamp));idmap[str(v.get("id"))]=cur.lastrowid
-        for s in services:
-            vid=idmap.get(str(s.get("vehicle_id",s.get("vehicleId")))); 
-            if not vid: continue
-            c.execute("""INSERT INTO services(vehicle_id,service_date,mileage,service_type,cost,provider,notes,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)""",
-              (vid,str(s.get("date",""))[:10],max(0,int(s.get("mileage",0))),str(s.get("type","Service"))[:100],max(0,float(s.get("cost",0))),str(s.get("provider",s.get("who","")))[:100],str(s.get("notes",""))[:1000],user["id"],stamp,stamp))
-        for f in fuel:
-            vid=idmap.get(str(f.get("vehicle_id",f.get("vehicleId"))))
-            if not vid: continue
-            c.execute("""INSERT INTO fuel_entries(vehicle_id,fill_date,odometer,gallons,cost,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)""",
-              (vid,str(f.get("date",""))[:10],max(0,int(f.get("odometer",0))),max(0.001,float(f.get("gallons",1))),max(0,float(f.get("cost",0))),user["id"],stamp,stamp))
-        for r in reminders:
-            vid=idmap.get(str(r.get("vehicle_id",r.get("vehicleId")))); 
-            if not vid: continue
-            c.execute("""INSERT INTO reminders(vehicle_id,name,miles_interval,months_interval,last_date,last_mileage,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)""",
-              (vid,str(r.get("name","Maintenance"))[:100],r.get("miles_interval",r.get("milesInterval")),r.get("months_interval",r.get("monthsInterval")),str(r.get("last_date",r.get("lastDate","")))[:10],max(0,int(r.get("last_mileage",r.get("lastMileage",0)))),stamp,stamp))
-    return {"ok":True,"vehicles":len(idmap)}
+        for name in BACKUP_DELETE_ORDER: c.execute(f"DELETE FROM {name}")
+        for name in BACKUP_TABLES:
+            cols=schema[name]
+            for row in tables[name]:
+                present=[col for col in cols if col in row];marks=','.join('?' for _ in present)
+                c.execute(f"INSERT INTO {name} ({','.join(present)}) VALUES ({marks})",tuple(row[col] for col in present))
+    for path in RECEIPTS_DIR.iterdir():
+        if path.is_file(): path.unlink()
+    for stored,data in staged.items(): (RECEIPTS_DIR/stored).write_bytes(data)
+    return {"ok":True,"version":3,"vehicles":len(tables["vehicles"])}
 
 app.mount("/static",StaticFiles(directory=BASE/"static"),name="static")
 
