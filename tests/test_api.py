@@ -497,3 +497,29 @@ def test_v1_notes_endpoint_returns_notes(tmp_path):
         token=admin.post('/api/tokens',json={'name':'test'}).json()['token']
     response=TestClient(main.app).get(f"/api/v1/vehicles/{vehicle['id']}/notes",headers={'Authorization':f'Bearer {token}'})
     assert response.status_code==200 and response.json()[0]['body']=='hello'
+
+
+def test_backup_is_admin_only_and_round_trips_current_fields(tmp_path):
+    main.DB_PATH=tmp_path/'backup-v3.db'; main.RECEIPTS_DIR=tmp_path/'receipts'; main.RECEIPTS_DIR.mkdir(); main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup',json={'username':'admin','password':'password-123'})
+        vehicle=admin.post('/api/vehicles',json={'year':2024,'make':'Backup','model':'Car','mileage':10,'private':True,'fuel_type':'Premium','tire_size':'225/45R17','oil_spec':'5W-30'}).json()
+        service=admin.post('/api/services',json={'vehicle_id':vehicle['id'],'date':'2026-09-22','mileage':11,'type':'Oil','cost':40,'torque_specs':'29 lb-ft','fluids':'5 qt','gotchas':'washer','youtube_url':'https://youtube.com/watch?v=x'}).json()
+        admin.post('/api/reminders',json={'vehicle_id':vehicle['id'],'name':'Tag','due_date':'2026-10-01','repeats_yearly':True,'last_date':'2026-01-01','last_mileage':0})
+        admin.post('/api/notes',json={'vehicle_id':vehicle['id'],'date':'2026-09-22','body':'note'})
+        admin.post('/api/mods',json={'vehicle_id':vehicle['id'],'name':'Mod','price':1,'torque_specs':'10','gotchas':'careful','youtube_url':'https://youtube.com/watch?v=y'})
+        admin.post('/api/fuel',json={'vehicle_id':vehicle['id'],'date':'2026-09-22','odometer':12,'gallons':1,'cost':4,'octane':'93'})
+        assert admin.post('/api/receipts',data={'kind':'service','entry_id':service['id']},files={'file':('r.png',b'png','image/png')}).status_code==201
+        admin.post('/api/users',json={'username':'member','password':'password-123','is_admin':False})
+        backup=admin.get('/api/export').json()
+        assert backup['version']==3 and backup['tables']['notes'] and backup['tables']['modifications']
+        assert backup['tables']['reminders'][0]['repeats_yearly']==1 and backup['tables']['fuel_entries'][0]['octane']=='93'
+        assert backup['tables']['services'][0]['fluids']=='5 qt' and backup['receipt_files']
+        restored=admin.post('/api/import',json=backup)
+        assert restored.status_code==200 and restored.json()['version']==3
+        again=admin.get('/api/export').json()
+        assert again['tables']['services'][0]['fluids']=='5 qt' and again['receipt_files']==backup['receipt_files']
+    with TestClient(main.app) as member:
+        member.post('/api/login',json={'username':'member','password':'password-123'})
+        assert member.get('/api/export').status_code==403
+        assert member.post('/api/import',json=backup).status_code==403
