@@ -237,6 +237,7 @@ def init_db():
           months_interval INTEGER,
           last_date TEXT NOT NULL,
           last_mileage INTEGER NOT NULL DEFAULT 0,
+          due_date TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
@@ -257,6 +258,10 @@ def init_db():
         admin = c.execute("SELECT id FROM users WHERE is_admin=1 ORDER BY id LIMIT 1").fetchone()
         if admin:
             c.execute("UPDATE vehicles SET owner_id=? WHERE owner_id IS NULL", (admin["id"],))
+        reminder_columns={r["name"] for r in c.execute("PRAGMA table_info(reminders)")}
+        if "due_date" not in reminder_columns: c.execute("ALTER TABLE reminders ADD COLUMN due_date TEXT")
+        fuel_columns={r["name"] for r in c.execute("PRAGMA table_info(fuel_entries)")}
+        if "octane" not in fuel_columns: c.execute("ALTER TABLE fuel_entries ADD COLUMN octane TEXT NOT NULL DEFAULT ''")
         if "reminder_id" not in {r["name"] for r in c.execute("PRAGMA table_info(services)")}:
             c.execute("ALTER TABLE services ADD COLUMN reminder_id INTEGER REFERENCES reminders(id)")
         if "photo_receipt_id" not in {r["name"] for r in c.execute("PRAGMA table_info(vehicles)")}:
@@ -376,6 +381,7 @@ class FuelIn(BaseModel):
     odometer: int = Field(ge=0)
     gallons: float = Field(gt=0)
     cost: float = Field(default=0, ge=0)
+    octane: str = Field(default="", max_length=20)
 
 class ReminderIn(BaseModel):
     vehicle_id: int
@@ -384,6 +390,7 @@ class ReminderIn(BaseModel):
     months_interval: int | None = Field(default=None, ge=1)
     last_date: str
     last_mileage: int = Field(default=0, ge=0)
+    due_date: str | None = None
 
 SETTINGS_KEYS = ("garage_name", "hide_service_log", "hide_maintenance", "hide_costs", "hide_fuel", "hide_notes", "use_vehicle_photos", "use_kilometers")
 
@@ -646,7 +653,7 @@ def fuel_rows(c, vehicle_id: int | None = None) -> list[dict[str, Any]]:
         if prev is not None and r["odometer"] > prev["odometer"]:
             mpg = (r["odometer"] - prev["odometer"]) / r["gallons"]
         out.append({"id": r["id"], "vehicle_id": r["vehicle_id"], "date": r["fill_date"], "odometer": r["odometer"],
-                    "gallons": r["gallons"], "cost": r["cost"], "mpg": mpg,
+                    "gallons": r["gallons"], "cost": r["cost"], "octane":r["octane"], "mpg": mpg,
                     "logged_by": display_user(c, r["logged_by"]), "created_at": r["created_at"], "updated_at": r["updated_at"]})
         prev = r
     out.reverse()
@@ -670,8 +677,8 @@ def add_fuel(body: FuelIn, request: Request):
         get_visible_vehicle(c,body.vehicle_id,user)
         if not c.execute("SELECT 1 FROM vehicles WHERE id=?", (body.vehicle_id,)).fetchone():
             raise HTTPException(404, "Vehicle not found")
-        cur = c.execute("INSERT INTO fuel_entries(vehicle_id,fill_date,odometer,gallons,cost,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
-                        (body.vehicle_id, body.date, body.odometer, body.gallons, body.cost, user["id"], stamp, stamp))
+        cur = c.execute("INSERT INTO fuel_entries(vehicle_id,fill_date,odometer,gallons,cost,octane,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                        (body.vehicle_id, body.date, body.odometer, body.gallons, body.cost, body.octane.strip(), user["id"], stamp, stamp))
         update_vehicle_mileage(c, body.vehicle_id, body.odometer, user["id"], stamp)
         return one_fuel(c, cur.lastrowid)
 
@@ -680,8 +687,8 @@ def update_fuel(item_id: int, body: FuelIn, request: Request):
     user=current_user(request)
     with db() as c:
         get_visible_vehicle(c,body.vehicle_id,user)
-        cur = c.execute("UPDATE fuel_entries SET vehicle_id=?,fill_date=?,odometer=?,gallons=?,cost=?,updated_at=? WHERE id=?",
-                        (body.vehicle_id, body.date, body.odometer, body.gallons, body.cost, now_iso(), item_id))
+        cur = c.execute("UPDATE fuel_entries SET vehicle_id=?,fill_date=?,odometer=?,gallons=?,cost=?,octane=?,updated_at=? WHERE id=?",
+                        (body.vehicle_id, body.date, body.odometer, body.gallons, body.cost, body.octane.strip(), now_iso(), item_id))
         if not cur.rowcount:
             raise HTTPException(404, "Fill-up not found")
         return one_fuel(c, item_id)
@@ -788,13 +795,18 @@ def reminder_status(mileage: int, r, today: date | None = None) -> dict[str, Any
         progress.append((today - last).days / total if total > 0 else 1)
         days_left = (due_date - today).days
         labels.append(f"{days_left} days remaining" if days_left >= 0 else f"{-days_left} days late")
+    if r["due_date"]:
+        due_date=datetime.strptime(r["due_date"], "%Y-%m-%d").date()
+        days_left=(due_date-today).days
+        progress.append(1 if days_left < 0 else .8 if days_left <= 30 else 0)
+        labels.append(f"due {due_date.strftime('%b %-d, %Y')}" if days_left >= 0 else f"{-days_left} days late")
     p = max(progress) if progress else 0
     state = "overdue" if p >= 1 else "soon" if p >= 0.8 else "ok"
     return {"state": state, "progress": min(1, p), "label": " · ".join(labels) or "No schedule"}
 
 def reminder_dict(row):
     return {"id":row["id"],"vehicle_id":row["vehicle_id"],"name":row["name"],"miles_interval":row["miles_interval"],
-            "months_interval":row["months_interval"],"last_date":row["last_date"],"last_mileage":row["last_mileage"]}
+            "months_interval":row["months_interval"],"last_date":row["last_date"],"last_mileage":row["last_mileage"],"due_date":row["due_date"]}
 
 @app.get("/api/reminders")
 def list_reminders(request:Request,vehicle_id:int|None=None):
@@ -807,22 +819,22 @@ def list_reminders(request:Request,vehicle_id:int|None=None):
 @app.post("/api/reminders")
 def add_reminder(body:ReminderIn,request:Request):
     user=current_user(request)
-    if not body.miles_interval and not body.months_interval: raise HTTPException(400,"Choose miles, months, or both")
+    if not body.miles_interval and not body.months_interval and not body.due_date: raise HTTPException(400,"Choose a due date, miles, months, or a combination")
     stamp=now_iso()
     with db() as c:
         get_visible_vehicle(c,body.vehicle_id,user)
-        cur=c.execute("""INSERT INTO reminders(vehicle_id,name,miles_interval,months_interval,last_date,last_mileage,created_at,updated_at)
-          VALUES(?,?,?,?,?,?,?,?)""",(body.vehicle_id,body.name.strip(),body.miles_interval,body.months_interval,body.last_date,body.last_mileage,stamp,stamp))
+        cur=c.execute("""INSERT INTO reminders(vehicle_id,name,miles_interval,months_interval,last_date,last_mileage,due_date,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,?)""",(body.vehicle_id,body.name.strip(),body.miles_interval,body.months_interval,body.last_date,body.last_mileage,body.due_date or None,stamp,stamp))
         return reminder_dict(c.execute("SELECT * FROM reminders WHERE id=?",(cur.lastrowid,)).fetchone())
 
 @app.put("/api/reminders/{item_id}")
 def update_reminder(item_id:int,body:ReminderIn,request:Request):
     user=current_user(request)
-    if not body.miles_interval and not body.months_interval: raise HTTPException(400,"Choose miles, months, or both")
+    if not body.miles_interval and not body.months_interval and not body.due_date: raise HTTPException(400,"Choose a due date, miles, months, or a combination")
     with db() as c:
         get_visible_vehicle(c,body.vehicle_id,user)
-        cur=c.execute("""UPDATE reminders SET vehicle_id=?,name=?,miles_interval=?,months_interval=?,last_date=?,last_mileage=?,updated_at=? WHERE id=?""",
-          (body.vehicle_id,body.name.strip(),body.miles_interval,body.months_interval,body.last_date,body.last_mileage,now_iso(),item_id))
+        cur=c.execute("""UPDATE reminders SET vehicle_id=?,name=?,miles_interval=?,months_interval=?,last_date=?,last_mileage=?,due_date=?,updated_at=? WHERE id=?""",
+          (body.vehicle_id,body.name.strip(),body.miles_interval,body.months_interval,body.last_date,body.last_mileage,body.due_date or None,now_iso(),item_id))
         if not cur.rowcount: raise HTTPException(404,"Reminder not found")
         return reminder_dict(c.execute("SELECT * FROM reminders WHERE id=?",(item_id,)).fetchone())
 
