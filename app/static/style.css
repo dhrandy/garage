@@ -41,3 +41,6 @@
 .tabs{overflow-x:auto;scrollbar-width:thin}
 .tab{flex:0 0 auto;min-width:max-content;padding:10px 12px}
 }
+
+.specs-tab-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin:0;padding:16px}.specs-tab-grid>div{min-width:0}.specs-tab-grid dd{overflow-wrap:anywhere}
+@media(max-width:650px){.specs-tab-grid{grid-template-columns:1fr;padding:12px}}
