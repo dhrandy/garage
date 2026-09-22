@@ -430,3 +430,16 @@ def test_general_due_date_reminders_and_fuel_octane(tmp_path):
         assert fuel['octane']=='E30'
         unset=admin.post('/api/fuel',json={'vehicle_id':1,'date':'2026-09-22','odometer':200,'gallons':5,'cost':20}).json()
         assert unset['octane']==''
+
+
+def test_yearly_and_service_reminder_shapes(tmp_path):
+    main.DB_PATH=tmp_path/'reminder-types.db'; main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup',json={'username':'admin','password':'password-123'})
+        vehicle=admin.post('/api/vehicles',json={'year':2020,'make':'Test','model':'Car','mileage':1000}).json()
+        renewal=admin.post('/api/reminders',json={'vehicle_id':vehicle['id'],'name':'Registration','due_date':'2025-03-15','repeats_yearly':True,'last_date':'2025-01-01','last_mileage':0}).json()
+        assert renewal['due_date']=='2025-03-15' and renewal['repeats_yearly'] is True
+        service=admin.post('/api/reminders',json={'vehicle_id':vehicle['id'],'name':'Oil','miles_interval':5000,'months_interval':6,'due_date':None,'repeats_yearly':False,'last_date':'2026-01-01','last_mileage':1000}).json()
+        assert service['miles_interval']==5000 and service['due_date'] is None
+        changed=admin.put(f"/api/reminders/{renewal['id']}",json={**renewal,'repeats_yearly':False}).json()
+        assert changed['repeats_yearly'] is False
