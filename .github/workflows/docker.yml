@@ -17,7 +17,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: playwright install --with-deps chromium
-      - run: pytest -q
+      - run: PYTHONPATH=. pytest -q
   build-and-push:
     needs: test
     runs-on: ubuntu-latest
