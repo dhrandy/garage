@@ -565,5 +565,5 @@ def test_swagger_docs_csp_allows_required_assets(tmp_path):
         assert docs.status_code==200 and 'Swagger UI' in docs.text
         csp=docs.headers['content-security-policy']
         assert 'https://cdn.jsdelivr.net' in csp and 'https://fastapi.tiangolo.com' in csp
-        assert "script-src 'self' https://cdn.jsdelivr.net" in csp
+        assert "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net" in csp
         assert 'https://cdn.jsdelivr.net' not in client.get('/api/status').headers['content-security-policy']
