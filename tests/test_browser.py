@@ -51,7 +51,7 @@ def test_menu_tabs_and_responsive_layout(app_url):
             expect(page.locator('.detail-meta')).to_have_text('Manage access to the shared garage')
             expect(page.get_by_role('button',name='Refresh data')).to_be_visible()
             assert errors==[]
-            page.get_by_role('button',name='Open menu').click();page.get_by_role('button',name='Log out').click()
+            page.locator('[data-action=toggle-menu]').click();expect(page.locator('[data-action=logout]')).to_be_visible();page.locator('[data-action=logout]').click()
             expect(page.get_by_role('heading',name='Welcome back')).to_be_visible()
             expect(page.locator('.vehicle-specs')).to_have_count(0)
             expect(page.locator('.tab')).to_have_count(0)
