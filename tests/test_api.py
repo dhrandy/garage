@@ -52,7 +52,7 @@ def test_admin_can_rename_garage_and_member_cannot(tmp_path):
     main.init_db()
     with TestClient(main.app) as admin:
         admin.post('/api/setup', json={'username':'admin-test','password':'password-123'})
-        assert admin.get('/api/settings').json() == {'garage_name':'Your Garage','hide_maintenance':False,'hide_costs':False,'hide_fuel':False,'hide_notes':False,'use_vehicle_photos':False,'use_kilometers':False}
+        assert admin.get('/api/settings').json() == {'garage_name':'Your Garage','hide_service_log':False,'hide_maintenance':False,'hide_costs':False,'hide_fuel':False,'hide_notes':False,'use_vehicle_photos':False}
         assert admin.put('/api/settings', json={'garage_name':'Test Garage'}).json()['garage_name'] == 'Test Garage'
         admin.post('/api/users', json={'username':'member-test','password':'password-456','is_admin':False})
     with TestClient(main.app) as member:
@@ -69,7 +69,7 @@ def test_admin_can_hide_vehicle_sections(tmp_path):
         admin.post('/api/setup', json={'username':'admin-test','password':'password-123'})
         result = admin.put('/api/settings', json={'hide_fuel':True,'hide_costs':True}).json()
         assert result['hide_fuel'] is True and result['hide_costs'] is True
-        assert result['hide_maintenance'] is False
+        assert result['hide_service_log'] is False and result['hide_maintenance'] is False
         assert result['garage_name'] == 'Your Garage'
         admin.post('/api/users', json={'username':'member-test','password':'password-456','is_admin':False})
     with TestClient(main.app) as member:
@@ -214,9 +214,9 @@ def test_estimated_mileage_from_fillups_and_services(tmp_path):
             est = main.mileage_estimate(c, 1, today=__import__('datetime').date(2026, 10, 1))
             assert est['est_mileage'] == 23000 + round(3000/92 * 30)
             assert main.effective_mileage(c, row) == main.mileage_estimate(c, 1)['est_mileage']
-            status = main.reminder_status(est['est_mileage'], {'miles_interval':3400,'months_interval':None,'last_mileage':20000,'last_date':'2026-06-01','due_date':None,'repeats_yearly':False}, today=__import__('datetime').date(2026, 10, 1))
+            status = main.reminder_status(est['est_mileage'], {'miles_interval':3400,'months_interval':None,'last_mileage':20000,'last_date':'2026-06-01'}, today=__import__('datetime').date(2026, 10, 1))
             assert status['state'] == 'overdue'
-            fresh = main.reminder_status(20000, {'miles_interval':3400,'months_interval':None,'last_mileage':20000,'last_date':'2026-06-01','due_date':None,'repeats_yearly':False}, today=__import__('datetime').date(2026, 10, 1))
+            fresh = main.reminder_status(20000, {'miles_interval':3400,'months_interval':None,'last_mileage':20000,'last_date':'2026-06-01'}, today=__import__('datetime').date(2026, 10, 1))
             assert fresh['state'] == 'ok'
 
 
@@ -359,7 +359,6 @@ def test_disabled_users_and_private_vehicle_visibility(tmp_path):
         shared=admin.post('/api/vehicles',json={'name':'Shared','year':'2024','mileage':1,'icon':'🚗'}).json()
         private=admin.post('/api/vehicles',json={'name':'Member private','year':'2025','mileage':2,'icon':'🚙','owner_id':member['id'],'private':True}).json()
         hidden=admin.post('/api/vehicles',json={'name':'Other private','year':'2026','mileage':3,'icon':'🛻','owner_id':other['id'],'private':True}).json()
-        admin.put('/api/me/vehicle-view',json={'show_all':True})
         for vid in (shared['id'],private['id'],hidden['id']):
             assert admin.post('/api/services',json={'vehicle_id':vid,'date':'2026-01-01','mileage':1,'type':'Check'}).status_code==200
         assert {v['name'] for v in admin.get('/api/vehicles').json()} >= {'Shared','Member private','Other private'}
@@ -375,7 +374,7 @@ def test_disabled_users_and_private_vehicle_visibility(tmp_path):
         names={v['name'] for v in member_client.get('/api/vehicles').json()}
         assert 'Shared' in names and 'Member private' in names and 'Other private' not in names
         services=member_client.get('/api/services').json()
-        assert {s['vehicle_id'] for s in services}=={1,shared['id'],private['id']}
+        assert {s['vehicle_id'] for s in services}=={shared['id'],private['id']}
         assert member_client.post('/api/fuel',json={'vehicle_id':hidden['id'],'date':'2026-01-01','odometer':5,'gallons':1,'cost':3}).status_code==404
         assert member_client.post('/api/notes',json={'vehicle_id':hidden['id'],'date':'2026-01-01','body':'no'}).status_code==404
         assert member_client.post('/api/mods',json={'vehicle_id':hidden['id'],'name':'no','price':1}).status_code==404
@@ -437,7 +436,7 @@ def test_yearly_and_service_reminder_shapes(tmp_path):
     main.DB_PATH=tmp_path/'reminder-types.db'; main.init_db()
     with TestClient(main.app) as admin:
         admin.post('/api/setup',json={'username':'admin','password':'password-123'})
-        vehicle=admin.post('/api/vehicles',json={'name':'2020 Test Car','year':'2020','mileage':1000}).json()
+        vehicle=admin.post('/api/vehicles',json={'year':2020,'make':'Test','model':'Car','mileage':1000}).json()
         renewal=admin.post('/api/reminders',json={'vehicle_id':vehicle['id'],'name':'Registration','due_date':'2025-03-15','repeats_yearly':True,'last_date':'2025-01-01','last_mileage':0}).json()
         assert renewal['due_date']=='2025-03-15' and renewal['repeats_yearly'] is True
         service=admin.post('/api/reminders',json={'vehicle_id':vehicle['id'],'name':'Oil','miles_interval':5000,'months_interval':6,'due_date':None,'repeats_yearly':False,'last_date':'2026-01-01','last_mileage':1000}).json()
@@ -449,7 +448,7 @@ def test_private_vehicle_receipts_are_not_exposed(tmp_path):
     main.DB_PATH=tmp_path/'receipt-auth.db'; main.init_db()
     with TestClient(main.app) as admin:
         admin.post('/api/setup',json={'username':'admin','password':'password-123'})
-        private=admin.post('/api/vehicles',json={'name':'2020 Private Car','year':'2020','mileage':1,'private':True}).json()
+        private=admin.post('/api/vehicles',json={'year':2020,'make':'Private','model':'Car','mileage':1,'private':True}).json()
         fuel=admin.post('/api/fuel',json={'vehicle_id':private['id'],'date':'2026-09-21','odometer':2,'gallons':1,'cost':1}).json()
         admin.post('/api/users',json={'username':'member','password':'password-123','is_admin':False})
         upload=admin.post('/api/receipts',data={'kind':'fuel','entry_id':fuel['id']},files={'file':('receipt.png',b'png','image/png')})
@@ -467,7 +466,7 @@ def test_service_install_notes_round_trip(tmp_path):
     main.DB_PATH=tmp_path/'service-notes.db'; main.init_db()
     with TestClient(main.app) as admin:
         admin.post('/api/setup',json={'username':'admin','password':'password-123'})
-        vehicle=admin.post('/api/vehicles',json={'name':'2020 Test Car','year':'2020','mileage':1000}).json()
+        vehicle=admin.post('/api/vehicles',json={'year':2020,'make':'Test','model':'Car','mileage':1000}).json()
         service=admin.post('/api/services',json={'vehicle_id':vehicle['id'],'date':'2026-09-21','mileage':1100,'type':'Oil change','cost':40,'provider':'DIY','notes':'Done','torque_specs':'29 lb-ft','fluids':'5W-30, 5 qt','gotchas':'Replace washer','youtube_url':'https://youtube.com/watch?v=test'}).json()
         assert service['torque_specs']=='29 lb-ft'
         assert service['fluids']=='5W-30, 5 qt'
@@ -479,10 +478,10 @@ def test_private_entry_cannot_be_moved_by_another_member(tmp_path):
     main.DB_PATH=tmp_path/'entry-move-auth.db'; main.init_db()
     with TestClient(main.app) as admin:
         admin.post('/api/setup',json={'username':'admin','password':'password-123'})
-        private=admin.post('/api/vehicles',json={'name':'2020 Private Car','year':'2020','mileage':1,'private':True}).json()
+        private=admin.post('/api/vehicles',json={'year':2020,'make':'Private','model':'Car','mileage':1,'private':True}).json()
         service=admin.post('/api/services',json={'vehicle_id':private['id'],'date':'2026-09-21','mileage':2,'type':'Secret','cost':1}).json()
         admin.post('/api/users',json={'username':'member','password':'password-123','is_admin':False})
-        public=admin.post('/api/vehicles',json={'name':'2021 Public Car','year':'2021','mileage':1,'private':False}).json()
+        public=admin.post('/api/vehicles',json={'year':2021,'make':'Public','model':'Car','mileage':1,'private':False}).json()
     with TestClient(main.app) as member:
         member.post('/api/login',json={'username':'member','password':'password-123'})
         moved={**service,'vehicle_id':public['id']}
@@ -493,7 +492,7 @@ def test_v1_notes_endpoint_returns_notes(tmp_path):
     main.DB_PATH=tmp_path/'v1-notes.db'; main.init_db()
     with TestClient(main.app) as admin:
         admin.post('/api/setup',json={'username':'admin','password':'password-123'})
-        vehicle=admin.post('/api/vehicles',json={'year':2020,'make':'Test','model':'Car','mileage':1}).json()
+        vehicle=admin.post('/api/vehicles',json={'name':'2020 Test Car','year':'2020','mileage':1}).json()
         admin.post('/api/notes',json={'vehicle_id':vehicle['id'],'date':'2026-09-22','body':'hello'})
         token=admin.post('/api/tokens',json={'name':'test'}).json()['token']
     response=TestClient(main.app).get(f"/api/v1/vehicles/{vehicle['id']}/notes",headers={'Authorization':f'Bearer {token}'})
