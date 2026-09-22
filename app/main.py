@@ -708,6 +708,21 @@ def delete_fuel(item_id: int, request: Request):
         delete_receipt_files(c, "fuel", item_id)
     return {"ok": True}
 
+def receipt_vehicle_id(c: sqlite3.Connection, row: sqlite3.Row) -> int | None:
+    if row["kind"] == "vehicle":
+        return row["entry_id"]
+    table = "services" if row["kind"] == "service" else "fuel_entries" if row["kind"] == "fuel" else None
+    if not table:
+        return None
+    entry = c.execute(f"SELECT vehicle_id FROM {table} WHERE id=?", (row["entry_id"],)).fetchone()
+    return entry["vehicle_id"] if entry else None
+
+def require_receipt_access(c: sqlite3.Connection, row: sqlite3.Row, user: sqlite3.Row) -> None:
+    vehicle_id = receipt_vehicle_id(c, row)
+    if vehicle_id is None:
+        raise HTTPException(404, "Receipt not found")
+    get_visible_vehicle(c, vehicle_id, user)
+
 def receipt_dict(c, row) -> dict[str, Any]:
     return {"id": row["id"], "kind": row["kind"], "entry_id": row["entry_id"], "orig_name": row["orig_name"],
             "mime": row["mime"], "size": row["size"], "uploaded_by": display_user(c, row["uploaded_by"]),
@@ -720,10 +735,10 @@ def delete_receipt_files(c, kind: str, entry_id: int) -> None:
 
 @app.get("/api/receipts")
 def list_receipts(request: Request, kind: str | None = None, entry_id: int | None = None):
-    current_user(request)
+    user = current_user(request)
     with db() as c:
         rows = c.execute("SELECT * FROM receipts WHERE (? IS NULL OR kind=?) AND (? IS NULL OR entry_id=?) ORDER BY id", (kind, kind, entry_id, entry_id))
-        return [receipt_dict(c, r) for r in rows]
+        return [receipt_dict(c, r) for r in rows if (vehicle_id := receipt_vehicle_id(c, r)) is not None and vehicle_accessible(get_vehicle_or_404(c, vehicle_id), user)]
 
 @app.post("/api/receipts", status_code=201)
 async def upload_receipt(request: Request, kind: str = Form(...), entry_id: int = Form(...), file: UploadFile = File(...)):
@@ -740,8 +755,10 @@ async def upload_receipt(request: Request, kind: str = Form(...), entry_id: int 
         raise HTTPException(400, "Receipt photos are limited to 10 MB")
     with db() as c:
         table = "services" if kind == "service" else "fuel_entries"
-        if not c.execute(f"SELECT 1 FROM {table} WHERE id=?", (entry_id,)).fetchone():
+        entry = c.execute(f"SELECT vehicle_id FROM {table} WHERE id=?", (entry_id,)).fetchone()
+        if not entry:
             raise HTTPException(404, "Entry not found")
+        get_visible_vehicle(c, entry["vehicle_id"], user)
         stored = f"{secrets.token_hex(16)}{RECEIPT_TYPES[mime]}"
         (RECEIPTS_DIR / stored).write_bytes(data)
         cur = c.execute("INSERT INTO receipts(kind,entry_id,stored_name,orig_name,mime,size,uploaded_by,created_at) VALUES(?,?,?,?,?,?,?,?)",
@@ -750,9 +767,11 @@ async def upload_receipt(request: Request, kind: str = Form(...), entry_id: int 
 
 @app.get("/api/receipts/{receipt_id}")
 def get_receipt(receipt_id: int, request: Request):
-    current_user(request)
+    user = current_user(request)
     with db() as c:
         row = c.execute("SELECT * FROM receipts WHERE id=?", (receipt_id,)).fetchone()
+        if row:
+            require_receipt_access(c, row, user)
     if not row:
         raise HTTPException(404, "Receipt not found")
     path = RECEIPTS_DIR / row["stored_name"]
@@ -762,11 +781,12 @@ def get_receipt(receipt_id: int, request: Request):
 
 @app.delete("/api/receipts/{receipt_id}")
 def delete_receipt(receipt_id: int, request: Request):
-    current_user(request)
+    user = current_user(request)
     with db() as c:
         row = c.execute("SELECT * FROM receipts WHERE id=?", (receipt_id,)).fetchone()
         if not row:
             raise HTTPException(404, "Receipt not found")
+        require_receipt_access(c, row, user)
         if row["kind"] == "vehicle":
             c.execute("UPDATE vehicles SET photo_receipt_id=NULL WHERE photo_receipt_id=?", (receipt_id,))
         (RECEIPTS_DIR / row["stored_name"]).unlink(missing_ok=True)
