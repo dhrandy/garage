@@ -29,6 +29,15 @@ def test_menu_tabs_and_responsive_layout(app_url):
             page.locator('.vehicle-card').first.click()
             labels=['Specs','Maintenance','Reminders','Fuel','Mods','Costs','Notes']
             expect(page.locator('.tab')).to_have_count(7)
+            page.get_by_role('button',name='Maintenance',exact=True).click()
+            page.get_by_role('button',name='+ Log service').click()
+            service_date=page.locator('#serviceForm [name=date]')
+            assert service_date.get_attribute('required') is None
+            service_date.fill('')
+            expect(page.locator('#serviceForm [name=reminder_id]')).to_be_disabled()
+            page.locator('#serviceForm [name=type]').fill('Undated browser service')
+            page.locator('#serviceForm').get_by_role('button',name='Save').click()
+            expect(page.locator('#tabBody')).to_contain_text('Date not set')
             page.get_by_role('button',name='Specs',exact=True).click()
             page.get_by_role('button',name='Edit specs').click()
             fields=page.locator('#specsForm .field')
@@ -37,13 +46,47 @@ def test_menu_tabs_and_responsive_layout(app_url):
             assert all(boxes[i]['y'] < boxes[i+1]['y'] for i in range(len(boxes)-1))
             assert all(b['x']+b['width'] <= width for b in boxes)
             fields.nth(0).locator('input').fill('2.0L inline-4')
-            page.get_by_role('button',name='Save').click()
-            grid=page.locator('.specs-tab-grid')
+            fields.nth(26).locator('input').fill('17 × 7 in')
+            expect(fields.nth(26).locator('label')).to_have_text('Wheel size')
+            page.get_by_role('button',name='Save').click(force=True)
+            grid=page.locator('.spec-sections')
             expect(grid).to_be_visible()
             expect(grid).to_be_visible()
+            expect(grid.locator('.spec-section',has_text='Wheels and Tires')).to_be_visible()
+            expect(grid.locator('dt',has_text='Wheel size')).to_be_visible()
+            expect(grid.locator('dd',has_text='17 × 7 in')).to_be_visible()
             grid_box=grid.bounding_box()
             assert grid_box is not None and grid_box['x'] >= 0 and grid_box['x']+grid_box['width'] <= width
+            sections=page.locator('.spec-section')
+            expect(sections).to_have_count(2)
+            row=page.locator('.spec-row').first
+            row_box=row.bounding_box();label_box=row.locator('dt').bounding_box();value_box=row.locator('dd').bounding_box()
+            assert row_box is not None and label_box is not None and value_box is not None
+            assert label_box['x'] < value_box['x'] and abs(label_box['y']-value_box['y']) < 2
             assert page.locator('.tab').all_inner_texts()==labels
+            page.evaluate("""async () => {
+                const vehicles=await fetch('/api/vehicles').then(r=>r.json());
+                const vehicle_id=vehicles[0].id;
+                for (const name of ['Numbered mod one','Numbered mod two']) {
+                    const response=await fetch('/api/mods',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({vehicle_id,name,price:0})});
+                    if (!response.ok) throw new Error(`mod setup failed: ${response.status}`);
+                }
+            }""")
+            page.reload();page.wait_for_load_state('networkidle')
+            page.locator('.vehicle-card').first.click()
+            page.get_by_role('button',name='Mods',exact=True).click()
+            cards=page.locator('.mod-card')
+            expect(cards).to_have_count(2 if width==1920 else 4)
+            numbers=cards.locator('.entry-number').all_inner_texts()
+            assert numbers==[str(i) for i in range(1,len(numbers)+1)]
+            first_box=cards.nth(0).bounding_box();second_box=cards.nth(1).bounding_box()
+            assert first_box is not None and second_box is not None
+            if width==1920:
+                assert second_box['x'] > first_box['x']
+                assert abs(second_box['y']-first_box['y']) < 2
+            else:
+                assert abs(second_box['x']-first_box['x']) < 2
+                assert second_box['y'] > first_box['y']
             for label in labels:
                 page.get_by_role('button',name=label,exact=True).click();expect(page.locator('#tabBody')).to_be_visible()
             page.locator('[data-action=toggle-menu]').click();expect(page.locator('[data-action=settings]')).to_be_visible();page.locator('[data-action=settings]').click()
