@@ -181,6 +181,16 @@ def init_db():
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS modifications (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          mod_date TEXT,
+          price REAL NOT NULL DEFAULT 0 CHECK(price >= 0),
+          logged_by INTEGER REFERENCES users(id),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS api_tokens (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           name TEXT NOT NULL,
@@ -892,6 +902,48 @@ def delete_note(item_id: int, request: Request):
         if not c.execute("DELETE FROM notes WHERE id=?", (item_id,)).rowcount: raise HTTPException(404, "Note not found")
     return {"ok": True}
 
+class ModIn(BaseModel):
+    vehicle_id: int
+    name: str = Field(min_length=1, max_length=120)
+    date: str | None = None
+    price: float = Field(default=0, ge=0)
+
+def mod_dict(c, row):
+    return {"id":row["id"],"vehicle_id":row["vehicle_id"],"name":row["name"],"date":row["mod_date"],"price":row["price"],
+            "logged_by":display_user(c,row["logged_by"]),"created_at":row["created_at"],"updated_at":row["updated_at"]}
+
+@app.get("/api/mods")
+def list_mods(request:Request,vehicle_id:int|None=None):
+    current_user(request)
+    with db() as c:
+        rows=c.execute("SELECT * FROM modifications WHERE (? IS NULL OR vehicle_id=?) ORDER BY COALESCE(mod_date,'' ) DESC,id DESC",(vehicle_id,vehicle_id))
+        return [mod_dict(c,r) for r in rows]
+
+@app.post("/api/mods",status_code=201)
+def add_mod(body:ModIn,request:Request):
+    user=current_user(request);stamp=now_iso()
+    with db() as c:
+        get_vehicle_or_404(c,body.vehicle_id)
+        cur=c.execute("INSERT INTO modifications(vehicle_id,name,mod_date,price,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                      (body.vehicle_id,body.name.strip(),body.date or None,body.price,user["id"],stamp,stamp))
+        return mod_dict(c,c.execute("SELECT * FROM modifications WHERE id=?",(cur.lastrowid,)).fetchone())
+
+@app.put("/api/mods/{item_id}")
+def update_mod(item_id:int,body:ModIn,request:Request):
+    current_user(request)
+    with db() as c:
+        cur=c.execute("UPDATE modifications SET vehicle_id=?,name=?,mod_date=?,price=?,updated_at=? WHERE id=?",
+                      (body.vehicle_id,body.name.strip(),body.date or None,body.price,now_iso(),item_id))
+        if not cur.rowcount: raise HTTPException(404,"Modification not found")
+        return mod_dict(c,c.execute("SELECT * FROM modifications WHERE id=?",(item_id,)).fetchone())
+
+@app.delete("/api/mods/{item_id}")
+def delete_mod(item_id:int,request:Request):
+    current_user(request)
+    with db() as c:
+        if not c.execute("DELETE FROM modifications WHERE id=?",(item_id,)).rowcount: raise HTTPException(404,"Modification not found")
+    return {"ok":True}
+
 class ServiceV1In(BaseModel):
     date: str
     mileage: int = Field(default=0, ge=0)
@@ -1164,5 +1216,6 @@ app.mount("/static",StaticFiles(directory=BASE/"static"),name="static")
 def frontend(path:str):
     if path.startswith("api/"): raise HTTPException(404)
     return FileResponse(BASE/"static"/"index.html")
+
 
 
