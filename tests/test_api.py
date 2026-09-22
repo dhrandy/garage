@@ -379,3 +379,24 @@ def test_disabled_users_and_private_vehicle_visibility(tmp_path):
         assert member_client.post('/api/notes',json={'vehicle_id':hidden['id'],'date':'2026-01-01','body':'no'}).status_code==404
         assert member_client.post('/api/mods',json={'vehicle_id':hidden['id'],'name':'no','price':1}).status_code==404
         assert member_client.put(f"/api/vehicles/{hidden['id']}",json={'name':'No','year':'2026','mileage':3,'icon':'🛻'}).status_code==404
+
+
+def test_admin_vehicle_view_defaults_filtered_and_persists(tmp_path):
+    main.DB_PATH=tmp_path/'admin-view.db'; main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup',json={'username':'admin','password':'password-123'})
+        friend=admin.post('/api/users',json={'username':'friend','password':'password-456'}).json()
+        private=admin.post('/api/vehicles',json={'name':'Friend private','owner_id':friend['id'],'private':True}).json()
+        assert 'Friend private' not in {v['name'] for v in admin.get('/api/vehicles').json()}
+        enabled=admin.put('/api/me/vehicle-view',json={'show_all':True})
+        assert enabled.status_code==200 and enabled.json()['show_all_vehicles'] is True
+        assert 'Friend private' in {v['name'] for v in admin.get('/api/vehicles').json()}
+    with TestClient(main.app) as admin_again:
+        admin_again.post('/api/login',json={'username':'admin','password':'password-123'})
+        assert admin_again.get('/api/me').json()['show_all_vehicles'] is True
+        admin_again.put('/api/me/vehicle-view',json={'show_all':False})
+        assert 'Friend private' not in {v['name'] for v in admin_again.get('/api/vehicles').json()}
+    with TestClient(main.app) as friend_client:
+        friend_client.post('/api/login',json={'username':'friend','password':'password-456'})
+        assert friend_client.put('/api/me/vehicle-view',json={'show_all':True}).status_code==403
+        assert 'Friend private' in {v['name'] for v in friend_client.get('/api/vehicles').json()}
