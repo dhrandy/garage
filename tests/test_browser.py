@@ -40,8 +40,9 @@ def test_menu_tabs_and_responsive_layout(app_url):
             page.get_by_role('button',name='Save').click()
             grid=page.locator('.specs-tab-grid')
             expect(grid).to_be_visible()
+            expect(grid).to_be_visible()
             grid_box=grid.bounding_box()
-            assert grid_box['x'] >= 0 and grid_box['x']+grid_box['width'] <= width
+            assert grid_box is not None and grid_box['x'] >= 0 and grid_box['x']+grid_box['width'] <= width
             assert page.locator('.tab').all_inner_texts()==labels
             for label in labels:
                 page.get_by_role('button',name=label,exact=True).click();expect(page.locator('#tabBody')).to_be_visible()
