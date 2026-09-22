@@ -486,3 +486,14 @@ def test_private_entry_cannot_be_moved_by_another_member(tmp_path):
         member.post('/api/login',json={'username':'member','password':'password-123'})
         moved={**service,'vehicle_id':public['id']}
         assert member.put(f"/api/services/{service['id']}",json=moved).status_code==404
+
+
+def test_v1_notes_endpoint_returns_notes(tmp_path):
+    main.DB_PATH=tmp_path/'v1-notes.db'; main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup',json={'username':'admin','password':'password-123'})
+        vehicle=admin.post('/api/vehicles',json={'year':2020,'make':'Test','model':'Car','mileage':1}).json()
+        admin.post('/api/notes',json={'vehicle_id':vehicle['id'],'date':'2026-09-22','body':'hello'})
+        token=admin.post('/api/tokens',json={'name':'test'}).json()['token']
+    response=TestClient(main.app).get(f"/api/v1/vehicles/{vehicle['id']}/notes",headers={'Authorization':f'Bearer {token}'})
+    assert response.status_code==200 and response.json()[0]['body']=='hello'
