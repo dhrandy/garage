@@ -414,3 +414,19 @@ def test_vehicle_specs_and_mod_install_notes(tmp_path):
         assert mod['torque_specs']=='Top nuts 30 lb-ft' and mod['youtube_url'].startswith('https://youtube.com/')
         mod=admin.put(f"/api/mods/{mod['id']}",json={**mod,'fluids':''}).json()
         assert mod['fluids']=='' and mod['gotchas']=='Support the hub'
+
+
+def test_general_due_date_reminders_and_fuel_octane(tmp_path):
+    main.DB_PATH=tmp_path/'renewals.db'; main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup',json={'username':'admin','password':'password-123'})
+        inspection=admin.post('/api/reminders',json={'vehicle_id':1,'name':'State inspection','due_date':'2026-10-01','last_date':'2026-01-01','last_mileage':0}).json()
+        registration=admin.post('/api/reminders',json={'vehicle_id':1,'name':'Tag renewal','due_date':'2026-11-15','last_date':'2026-01-01','last_mileage':0}).json()
+        assert inspection['due_date']=='2026-10-01' and registration['name']=='Tag renewal'
+        assert admin.put(f"/api/reminders/{inspection['id']}",json={**inspection,'due_date':'2026-10-15'}).json()['due_date']=='2026-10-15'
+        fuel=admin.post('/api/fuel',json={'vehicle_id':1,'date':'2026-09-21','odometer':100,'gallons':5,'cost':20,'octane':'93'}).json()
+        assert fuel['octane']=='93'
+        fuel=admin.put(f"/api/fuel/{fuel['id']}",json={**fuel,'octane':'E30'}).json()
+        assert fuel['octane']=='E30'
+        unset=admin.post('/api/fuel',json={'vehicle_id':1,'date':'2026-09-22','odometer':200,'gallons':5,'cost':20}).json()
+        assert unset['octane']==''
