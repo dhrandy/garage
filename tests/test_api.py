@@ -348,3 +348,34 @@ def test_v1_mileage_update(tmp_path):
         assert vehicle['mileage'] == 25000
         assert admin.put('/api/v1/vehicles/1/mileage', json={'mileage':-5}, headers=auth).status_code == 422
         assert admin.put('/api/v1/vehicles/99/mileage', json={'mileage':100}, headers=auth).status_code == 404
+
+
+def test_disabled_users_and_private_vehicle_visibility(tmp_path):
+    main.DB_PATH=tmp_path/'privacy.db'; main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup',json={'username':'admin','password':'password-123'})
+        member=admin.post('/api/users',json={'username':'member','password':'password-456'}).json()
+        other=admin.post('/api/users',json={'username':'other','password':'password-789'}).json()
+        shared=admin.post('/api/vehicles',json={'name':'Shared','year':'2024','mileage':1,'icon':'🚗'}).json()
+        private=admin.post('/api/vehicles',json={'name':'Member private','year':'2025','mileage':2,'icon':'🚙','owner_id':member['id'],'private':True}).json()
+        hidden=admin.post('/api/vehicles',json={'name':'Other private','year':'2026','mileage':3,'icon':'🛻','owner_id':other['id'],'private':True}).json()
+        for vid in (shared['id'],private['id'],hidden['id']):
+            assert admin.post('/api/services',json={'vehicle_id':vid,'date':'2026-01-01','mileage':1,'type':'Check'}).status_code==200
+        assert {v['name'] for v in admin.get('/api/vehicles').json()} >= {'Shared','Member private','Other private'}
+        assert admin.put(f"/api/users/{member['id']}",json={'active':False}).status_code==200
+        assert admin.put(f"/api/users/{admin.get('/api/me').json()['id']}",json={'active':False}).status_code==400
+    with TestClient(main.app) as disabled:
+        assert disabled.post('/api/login',json={'username':'member','password':'password-456'}).status_code==401
+    with TestClient(main.app) as admin:
+        admin.post('/api/login',json={'username':'admin','password':'password-123'})
+        assert admin.put(f"/api/users/{member['id']}",json={'active':True}).status_code==200
+    with TestClient(main.app) as member_client:
+        assert member_client.post('/api/login',json={'username':'member','password':'password-456'}).status_code==200
+        names={v['name'] for v in member_client.get('/api/vehicles').json()}
+        assert 'Shared' in names and 'Member private' in names and 'Other private' not in names
+        services=member_client.get('/api/services').json()
+        assert {s['vehicle_id'] for s in services}=={1,shared['id'],private['id']}
+        assert member_client.post('/api/fuel',json={'vehicle_id':hidden['id'],'date':'2026-01-01','odometer':5,'gallons':1,'cost':3}).status_code==404
+        assert member_client.post('/api/notes',json={'vehicle_id':hidden['id'],'date':'2026-01-01','body':'no'}).status_code==404
+        assert member_client.post('/api/mods',json={'vehicle_id':hidden['id'],'name':'no','price':1}).status_code==404
+        assert member_client.put(f"/api/vehicles/{hidden['id']}",json={'name':'No','year':'2026','mileage':3,'icon':'🛻'}).status_code==404
