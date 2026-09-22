@@ -30,6 +30,10 @@ def test_menu_tabs_and_responsive_layout(app_url):
             labels=['Specs','Maintenance','Reminders','Fuel','Mods','Costs','Notes']
             expect(page.locator('.tab')).to_have_count(7)
             page.get_by_role('button',name='Specs',exact=True).click()
+            grid=page.locator('.specs-tab-grid')
+            expect(grid).to_be_visible()
+            grid_box=grid.bounding_box()
+            assert grid_box['x'] >= 0 and grid_box['x']+grid_box['width'] <= width
             page.get_by_role('button',name='Edit specs').click()
             fields=page.locator('#specsForm .field')
             expect(fields).to_have_count(27)
