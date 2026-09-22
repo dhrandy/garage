@@ -29,6 +29,14 @@ def test_menu_tabs_and_responsive_layout(app_url):
             page.locator('.vehicle-card').first.click()
             labels=['Specs','Maintenance','Reminders','Fuel','Mods','Costs','Notes']
             expect(page.locator('.tab')).to_have_count(7)
+            page.get_by_role('button',name='Specs',exact=True).click()
+            page.get_by_role('button',name='Edit specs').click()
+            fields=page.locator('#specsForm .field')
+            expect(fields).to_have_count(25)
+            boxes=[fields.nth(i).bounding_box() for i in range(fields.count())]
+            assert all(boxes[i]['y'] < boxes[i+1]['y'] for i in range(len(boxes)-1))
+            assert all(b['x']+b['width'] <= width for b in boxes)
+            page.get_by_role('button',name='Cancel').click()
             assert page.locator('.tab').all_inner_texts()==labels
             for label in labels:
                 page.get_by_role('button',name=label,exact=True).click();expect(page.locator('#tabBody')).to_be_visible()
