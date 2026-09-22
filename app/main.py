@@ -15,7 +15,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, Security, UploadFile
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -44,6 +45,7 @@ _api_failures: dict[str, deque[float]] = defaultdict(deque)
 _api_lock = threading.Lock()
 
 app = FastAPI(title="Garage", version="2.0.0", docs_url="/api/docs", openapi_url="/api/openapi.json")
+bearer_scheme = HTTPBearer(auto_error=False)
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
@@ -1224,21 +1226,21 @@ class ServiceV1In(BaseModel):
     reminder_id: int | None = None
 
 @app.get("/api/v1/vehicles")
-def v1_list_vehicles(request: Request):
+def v1_list_vehicles(request: Request, _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
     token=token_auth(request)
     with db() as c:
         user=token_user(c,token)
         return [vehicle_dict(c, r) for r in c.execute("SELECT * FROM vehicles ORDER BY id") if vehicle_accessible(r,user)]
 
 @app.get("/api/v1/vehicles/{vehicle_id}/specs")
-def v1_get_specs(vehicle_id:int, request:Request):
+def v1_get_specs(vehicle_id:int, request:Request, _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
     token=token_auth(request)
     with db() as c:
         user=token_user(c,token); get_visible_vehicle(c,vehicle_id,user)
         return specs_dict(c.execute("SELECT * FROM vehicle_specs WHERE vehicle_id=?",(vehicle_id,)).fetchone())
 
 @app.put("/api/v1/vehicles/{vehicle_id}/specs")
-def v1_put_specs(vehicle_id:int, body:VehicleSpecsIn, request:Request):
+def v1_put_specs(vehicle_id:int, body:VehicleSpecsIn, request:Request, _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
     token=token_auth(request)
     with db() as c:
         user=token_user(c,token); vehicle=get_visible_vehicle(c,vehicle_id,user)
@@ -1246,7 +1248,7 @@ def v1_put_specs(vehicle_id:int, body:VehicleSpecsIn, request:Request):
         return save_specs(c,vehicle_id,body)
 
 @app.get("/api/v1/vehicles/{vehicle_id}/services")
-def v1_list_services(vehicle_id: int, request: Request):
+def v1_list_services(vehicle_id: int, request: Request, _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
     token=token_auth(request)
     with db() as c:
         user=token_user(c,token)
@@ -1255,7 +1257,7 @@ def v1_list_services(vehicle_id: int, request: Request):
         return [service_dict(c, r) for r in rows]
 
 @app.get("/api/v1/vehicles/{vehicle_id}/maintenance")
-def v1_maintenance(vehicle_id: int, request: Request):
+def v1_maintenance(vehicle_id: int, request: Request, _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
     token=token_auth(request)
     with db() as c:
         user=token_user(c,token)
@@ -1268,7 +1270,7 @@ def v1_maintenance(vehicle_id: int, request: Request):
         return out
 
 @app.get("/api/v1/vehicles/{vehicle_id}/mods")
-def v1_list_mods(vehicle_id: int, request: Request):
+def v1_list_mods(vehicle_id: int, request: Request, _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
     token=token_auth(request)
     with db() as c:
         user=token_user(c,token)
@@ -1277,7 +1279,7 @@ def v1_list_mods(vehicle_id: int, request: Request):
         return [mod_dict(c,r) for r in rows]
 
 @app.post("/api/v1/vehicles/{vehicle_id}/mods", status_code=201)
-def v1_add_mod(vehicle_id: int, body: ModV1In, request: Request):
+def v1_add_mod(vehicle_id: int, body: ModV1In, request: Request, _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
     token=token_auth(request); stamp=now_iso()
     with db() as c:
         user=token_user(c,token)
@@ -1287,7 +1289,7 @@ def v1_add_mod(vehicle_id: int, body: ModV1In, request: Request):
         return mod_dict(c,c.execute("SELECT * FROM modifications WHERE id=?",(cur.lastrowid,)).fetchone())
 
 @app.get("/api/v1/vehicles/{vehicle_id}/fuel")
-def v1_list_fuel(vehicle_id: int, request: Request):
+def v1_list_fuel(vehicle_id: int, request: Request, _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
     token=token_auth(request)
     with db() as c:
         user=token_user(c,token)
@@ -1295,7 +1297,7 @@ def v1_list_fuel(vehicle_id: int, request: Request):
         return fuel_rows(c, vehicle_id)
 
 @app.post("/api/v1/vehicles/{vehicle_id}/services", status_code=201)
-def v1_add_service(vehicle_id: int, body: ServiceV1In, request: Request):
+def v1_add_service(vehicle_id: int, body: ServiceV1In, request: Request, _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
     token = token_auth(request); stamp = now_iso()
     with db() as c:
         user=token_user(c,token)
@@ -1308,7 +1310,7 @@ def v1_add_service(vehicle_id: int, body: ServiceV1In, request: Request):
 
 @app.post("/api/v1/vehicles/{vehicle_id}/fuel", status_code=201)
 async def v1_add_fuel(vehicle_id: int, request: Request, date: str = Form(...), odometer: int = Form(..., ge=0),
-                      gallons: float = Form(..., gt=0), cost: float = Form(0, ge=0), file: UploadFile | None = File(None)):
+                      gallons: float = Form(..., gt=0), cost: float = Form(0, ge=0), file: UploadFile | None = File(None), _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
     token = token_auth(request); stamp = now_iso()
     data = await file.read() if file else b""
     mime = (file.content_type or "").lower() if file else ""
@@ -1343,7 +1345,7 @@ class MileageV1In(BaseModel):
     date: str | None = None
 
 @app.put("/api/v1/vehicles/{vehicle_id}/mileage")
-def v1_update_mileage(vehicle_id: int, body: MileageV1In, request: Request):
+def v1_update_mileage(vehicle_id: int, body: MileageV1In, request: Request, _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
     token=token_auth(request); stamp=now_iso()
     with db() as c:
         user=token_user(c,token)
@@ -1358,7 +1360,7 @@ class NoteV1In(BaseModel):
     body: str = Field(min_length=1, max_length=2000)
 
 @app.get("/api/v1/vehicles/{vehicle_id}/notes")
-def v1_list_notes(vehicle_id: int, request: Request):
+def v1_list_notes(vehicle_id: int, request: Request, _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
     token=token_auth(request)
     with db() as c:
         user=token_user(c,token)
@@ -1367,7 +1369,7 @@ def v1_list_notes(vehicle_id: int, request: Request):
         return [note_dict(c, r) for r in rows]
 
 @app.post("/api/v1/vehicles/{vehicle_id}/notes", status_code=201)
-def v1_add_note(vehicle_id: int, body: NoteV1In, request: Request):
+def v1_add_note(vehicle_id: int, body: NoteV1In, request: Request, _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
     token = token_auth(request); stamp = now_iso()
     with db() as c:
         user=token_user(c,token)
