@@ -641,6 +641,9 @@ def add_service(body:ServiceIn, request:Request):
 def update_service(item_id:int,body:ServiceIn,request:Request):
     user=current_user(request)
     with db() as c:
+        existing=c.execute("SELECT vehicle_id FROM services WHERE id=?",(item_id,)).fetchone()
+        if not existing: raise HTTPException(404,"Service not found")
+        get_visible_vehicle(c,existing["vehicle_id"],user)
         get_visible_vehicle(c,body.vehicle_id,user)
         apply_reminder_reset(c, body.vehicle_id, body.reminder_id, body.date, body.mileage)
         cur=c.execute("""UPDATE services SET vehicle_id=?,service_date=?,mileage=?,service_type=?,cost=?,provider=?,notes=?,torque_specs=?,fluids=?,gotchas=?,youtube_url=?,reminder_id=?,updated_at=? WHERE id=?""",
@@ -701,6 +704,9 @@ def add_fuel(body: FuelIn, request: Request):
 def update_fuel(item_id: int, body: FuelIn, request: Request):
     user=current_user(request)
     with db() as c:
+        existing=c.execute("SELECT vehicle_id FROM fuel_entries WHERE id=?",(item_id,)).fetchone()
+        if not existing: raise HTTPException(404,"Fill-up not found")
+        get_visible_vehicle(c,existing["vehicle_id"],user)
         get_visible_vehicle(c,body.vehicle_id,user)
         cur = c.execute("UPDATE fuel_entries SET vehicle_id=?,fill_date=?,odometer=?,gallons=?,cost=?,octane=?,updated_at=? WHERE id=?",
                         (body.vehicle_id, body.date, body.odometer, body.gallons, body.cost, body.octane.strip(), now_iso(), item_id))
@@ -871,6 +877,9 @@ def update_reminder(item_id:int,body:ReminderIn,request:Request):
     user=current_user(request)
     if not body.miles_interval and not body.months_interval and not body.due_date: raise HTTPException(400,"Choose a due date, miles, months, or a combination")
     with db() as c:
+        existing=c.execute("SELECT vehicle_id FROM reminders WHERE id=?",(item_id,)).fetchone()
+        if not existing: raise HTTPException(404,"Reminder not found")
+        get_visible_vehicle(c,existing["vehicle_id"],user)
         get_visible_vehicle(c,body.vehicle_id,user)
         cur=c.execute("""UPDATE reminders SET vehicle_id=?,name=?,miles_interval=?,months_interval=?,last_date=?,last_mileage=?,due_date=?,repeats_yearly=?,updated_at=? WHERE id=?""",
           (body.vehicle_id,body.name.strip(),body.miles_interval,body.months_interval,body.last_date,body.last_mileage,body.due_date or None,int(body.repeats_yearly),now_iso(),item_id))
@@ -1026,6 +1035,9 @@ def add_note(body: NoteIn, request: Request):
 def update_note(item_id: int, body: NoteIn, request: Request):
     user=current_user(request)
     with db() as c:
+        existing=c.execute("SELECT vehicle_id FROM notes WHERE id=?",(item_id,)).fetchone()
+        if not existing: raise HTTPException(404,"Note not found")
+        get_visible_vehicle(c,existing["vehicle_id"],user)
         get_visible_vehicle(c,body.vehicle_id,user)
         cur = c.execute("UPDATE notes SET vehicle_id=?,note_date=?,body=?,updated_at=? WHERE id=?",
                         (body.vehicle_id, body.date, body.body.strip(), now_iso(), item_id))
@@ -1078,6 +1090,9 @@ def add_mod(body:ModIn,request:Request):
 def update_mod(item_id:int,body:ModIn,request:Request):
     user=current_user(request)
     with db() as c:
+        existing=c.execute("SELECT vehicle_id FROM modifications WHERE id=?",(item_id,)).fetchone()
+        if not existing: raise HTTPException(404,"Modification not found")
+        get_visible_vehicle(c,existing["vehicle_id"],user)
         get_visible_vehicle(c,body.vehicle_id,user)
         cur=c.execute("UPDATE modifications SET vehicle_id=?,name=?,mod_date=?,price=?,torque_specs=?,fluids=?,gotchas=?,youtube_url=?,updated_at=? WHERE id=?",
                       (body.vehicle_id,body.name.strip(),body.date or None,body.price,body.torque_specs.strip(),body.fluids.strip(),body.gotchas.strip(),body.youtube_url.strip(),now_iso(),item_id))
