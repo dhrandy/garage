@@ -27,8 +27,8 @@ def test_menu_tabs_and_responsive_layout(app_url):
                 page.locator('[name=username]').fill('admin-test');page.locator('[name=password]').fill('password-123');page.get_by_role('button',name='Sign in').click()
             expect(page.locator('.vehicle-card').first).to_be_visible()
             page.locator('.vehicle-card').first.click()
-            labels=['Maintenance','Reminders','Fuel','Mods','Costs','Notes']
-            expect(page.locator('.tab')).to_have_count(6)
+            labels=['Specs','Maintenance','Reminders','Fuel','Mods','Costs','Notes']
+            expect(page.locator('.tab')).to_have_count(7)
             assert page.locator('.tab').all_inner_texts()==labels
             for label in labels:
                 page.get_by_role('button',name=label,exact=True).click();expect(page.locator('#tabBody')).to_be_visible()
