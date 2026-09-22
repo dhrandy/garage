@@ -54,7 +54,7 @@ Settings also has **Vehicle page sections** checkboxes to hide the Service log, 
 
 ## Maintenance reminders and service logging
 
-The **Maintenance** tab on each vehicle tracks recurring items by miles, months, or both. When logging a service you can pick **Marks maintenance done** to link it to one of those items; the item's last-done date and mileage reset to the service entry, so nothing has to be recorded twice. The same link is available in the REST API as `reminder_id` on the service-create endpoints.
+The **Maintenance** tab on each vehicle tracks recurring items by miles, months, or both. A service date is optional; undated entries display **Date not set**. When a date is supplied, you can pick **Marks maintenance done** to link the service to one of those items; the item's last-done date and mileage reset to the service entry, so nothing has to be recorded twice. Undated services do not reset or link a maintenance reminder. The same rules apply to `date` and `reminder_id` on the service-create API endpoints.
 
 ## Estimated mileage
 
@@ -118,9 +118,9 @@ Endpoints (all relative to `http://your-server:8917`):
 - `GET /api/v1/vehicles/{id}/fuel` — fill-up log with per-fill `mpg`
 - `GET /api/v1/vehicles/{id}/notes` — dated freeform notes
 - `GET /api/v1/vehicles/{id}/mods` — modification list
-- `PUT /api/v1/vehicles/{id}/specs` — create or replace detailed specs (engine, transmission, drivetrain, dimensions, capacities, and related fields)
+- `PUT /api/v1/vehicles/{id}/specs` — create or replace detailed specs (engine, transmission, drivetrain, dimensions, capacities, `wheel_size`, and related fields). Wheel size is separate from the vehicle's `tire_size`, so values such as `17 × 7 in` and `205/45R17` are stored independently.
 - `PUT /api/v1/vehicles/{id}/mileage` — update the odometer directly (JSON: `mileage`, optional `date`), same as the app's Update mileage button
-- `POST /api/v1/vehicles/{id}/services` — log a service entry (JSON)
+- `POST /api/v1/vehicles/{id}/services` — log a service entry (JSON; `date` is optional, and an undated service ignores `reminder_id`)
 - `POST /api/v1/vehicles/{id}/fuel` — log a fill-up (multipart form, optional receipt `file`)
 - `POST /api/v1/vehicles/{id}/notes` — add a note (JSON: `date`, `body`)
 - `POST /api/v1/vehicles/{id}/mods` — add a modification (JSON: `name`, optional `date`, `price`, `torque_specs`, `gotchas`, `youtube_url`)
