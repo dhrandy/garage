@@ -450,7 +450,7 @@ class VehicleSpecsIn(BaseModel):
 
 class ServiceIn(BaseModel):
     vehicle_id: int
-    date: str
+    date: str | None = None
     mileage: int = Field(default=0, ge=0)
     type: str = Field(min_length=1, max_length=100)
     cost: float = Field(default=0, ge=0)
@@ -568,7 +568,7 @@ def set_vehicle_view(body: VehicleViewIn, request: Request):
 
 def mileage_estimate(c, vehicle_id: int, today: date | None = None) -> dict[str, Any]:
     today = today or datetime.now(timezone.utc).date()
-    points = [(r["service_date"], r["mileage"]) for r in c.execute("SELECT service_date,mileage FROM services WHERE vehicle_id=? AND mileage>0", (vehicle_id,))]
+    points = [(r["service_date"], r["mileage"]) for r in c.execute("SELECT service_date,mileage FROM services WHERE vehicle_id=? AND mileage>0 AND service_date<>''", (vehicle_id,))]
     points += [(r["fill_date"], r["odometer"]) for r in c.execute("SELECT fill_date,odometer FROM fuel_entries WHERE vehicle_id=? AND odometer>0", (vehicle_id,))]
     points = sorted(set(points))
     if not points:
@@ -676,16 +676,17 @@ def update_vehicle_mileage(c, vehicle_id: int, mileage: int, user_id: int | None
         c.execute("INSERT INTO mileage_updates(vehicle_id,mileage,recorded_by,recorded_at) VALUES(?,?,?,?)",
                   (vehicle_id, mileage, user_id, stamp))
 
-def apply_reminder_reset(c, vehicle_id: int, reminder_id: int | None, service_date: str, mileage: int) -> None:
-    if reminder_id is None:
-        return
+def apply_reminder_reset(c, vehicle_id: int, reminder_id: int | None, service_date: str | None, mileage: int) -> int | None:
+    if reminder_id is None or not service_date:
+        return None
     cur = c.execute("UPDATE reminders SET last_date=?,last_mileage=?,updated_at=? WHERE id=? AND vehicle_id=?",
                     (service_date, mileage, now_iso(), reminder_id, vehicle_id))
     if not cur.rowcount:
         raise HTTPException(400, "Maintenance item not found for this vehicle")
+    return reminder_id
 
 def service_dict(c,row):
-    return {"id":row["id"],"vehicle_id":row["vehicle_id"],"date":row["service_date"],"mileage":row["mileage"],
+    return {"id":row["id"],"vehicle_id":row["vehicle_id"],"date":row["service_date"] or None,"mileage":row["mileage"],
             "type":row["service_type"],"cost":row["cost"],"provider":row["provider"],"notes":row["notes"],
             "torque_specs":row["torque_specs"],"fluids":row["fluids"],"gotchas":row["gotchas"],"youtube_url":row["youtube_url"],
             "logged_by":display_user(c,row["logged_by"]),"logged_by_id":row["logged_by"],"reminder_id":row["reminder_id"],"created_at":row["created_at"],"updated_at":row["updated_at"]}
@@ -730,9 +731,10 @@ def add_service(body:ServiceIn, request:Request):
     with db() as c:
         get_visible_vehicle(c,body.vehicle_id,user)
         if not c.execute("SELECT 1 FROM vehicles WHERE id=?",(body.vehicle_id,)).fetchone(): raise HTTPException(404,"Vehicle not found")
-        apply_reminder_reset(c, body.vehicle_id, body.reminder_id, body.date, body.mileage)
+        service_date=body.date or ""
+        reminder_id=apply_reminder_reset(c, body.vehicle_id, body.reminder_id, service_date, body.mileage)
         cur=c.execute("""INSERT INTO services(vehicle_id,service_date,mileage,service_type,cost,provider,notes,torque_specs,fluids,gotchas,youtube_url,logged_by,reminder_id,created_at,updated_at)
-          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(body.vehicle_id,body.date,body.mileage,body.type.strip(),body.cost,body.provider.strip(),body.notes.strip(),body.torque_specs.strip(),body.fluids.strip(),body.gotchas.strip(),body.youtube_url.strip(),user["id"],body.reminder_id,stamp,stamp))
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(body.vehicle_id,service_date,body.mileage,body.type.strip(),body.cost,body.provider.strip(),body.notes.strip(),body.torque_specs.strip(),body.fluids.strip(),body.gotchas.strip(),body.youtube_url.strip(),user["id"],reminder_id,stamp,stamp))
         update_vehicle_mileage(c, body.vehicle_id, body.mileage, user["id"], stamp)
         return service_dict(c,c.execute("SELECT * FROM services WHERE id=?",(cur.lastrowid,)).fetchone())
 
@@ -744,9 +746,10 @@ def update_service(item_id:int,body:ServiceIn,request:Request):
         if not existing: raise HTTPException(404,"Service not found")
         get_visible_vehicle(c,existing["vehicle_id"],user)
         get_visible_vehicle(c,body.vehicle_id,user)
-        apply_reminder_reset(c, body.vehicle_id, body.reminder_id, body.date, body.mileage)
+        service_date=body.date or ""
+        reminder_id=apply_reminder_reset(c, body.vehicle_id, body.reminder_id, service_date, body.mileage)
         cur=c.execute("""UPDATE services SET vehicle_id=?,service_date=?,mileage=?,service_type=?,cost=?,provider=?,notes=?,torque_specs=?,fluids=?,gotchas=?,youtube_url=?,reminder_id=?,updated_at=? WHERE id=?""",
-          (body.vehicle_id,body.date,body.mileage,body.type.strip(),body.cost,body.provider.strip(),body.notes.strip(),body.torque_specs.strip(),body.fluids.strip(),body.gotchas.strip(),body.youtube_url.strip(),body.reminder_id,now_iso(),item_id))
+          (body.vehicle_id,service_date,body.mileage,body.type.strip(),body.cost,body.provider.strip(),body.notes.strip(),body.torque_specs.strip(),body.fluids.strip(),body.gotchas.strip(),body.youtube_url.strip(),reminder_id,now_iso(),item_id))
         if not cur.rowcount: raise HTTPException(404,"Service not found")
         return service_dict(c,c.execute("SELECT * FROM services WHERE id=?",(item_id,)).fetchone())
 
@@ -1217,7 +1220,7 @@ class ModV1In(BaseModel):
     youtube_url: str = Field(default="", max_length=500)
 
 class ServiceV1In(BaseModel):
-    date: str
+    date: str | None = None
     mileage: int = Field(default=0, ge=0)
     type: str = Field(min_length=1, max_length=100)
     cost: float = Field(default=0, ge=0)
@@ -1302,9 +1305,10 @@ def v1_add_service(vehicle_id: int, body: ServiceV1In, request: Request, _auth: 
     with db() as c:
         user=token_user(c,token)
         get_visible_vehicle(c, vehicle_id, user)
-        apply_reminder_reset(c, vehicle_id, body.reminder_id, body.date, body.mileage)
+        service_date=body.date or ""
+        reminder_id=apply_reminder_reset(c, vehicle_id, body.reminder_id, service_date, body.mileage)
         cur = c.execute("""INSERT INTO services(vehicle_id,service_date,mileage,service_type,cost,provider,notes,logged_by,reminder_id,created_at,updated_at)
-          VALUES(?,?,?,?,?,?,?,?,?,?,?)""", (vehicle_id, body.date, body.mileage, body.type.strip(), body.cost, body.provider.strip(), body.notes.strip(), token["created_by"], body.reminder_id, stamp, stamp))
+          VALUES(?,?,?,?,?,?,?,?,?,?,?)""", (vehicle_id, service_date, body.mileage, body.type.strip(), body.cost, body.provider.strip(), body.notes.strip(), token["created_by"], reminder_id, stamp, stamp))
         update_vehicle_mileage(c, vehicle_id, body.mileage, token["created_by"], stamp)
         return service_dict(c, c.execute("SELECT * FROM services WHERE id=?", (cur.lastrowid,)).fetchone())
 
