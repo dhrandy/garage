@@ -130,6 +130,7 @@ def init_db():
           salt TEXT NOT NULL,
           is_admin INTEGER NOT NULL DEFAULT 0,
           active INTEGER NOT NULL DEFAULT 1,
+          show_all_vehicles INTEGER NOT NULL DEFAULT 0,
           created_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS sessions (
@@ -233,6 +234,9 @@ def init_db():
           updated_at TEXT NOT NULL
         );
         """)
+        user_columns = {r["name"] for r in c.execute("PRAGMA table_info(users)")}
+        if "show_all_vehicles" not in user_columns:
+            c.execute("ALTER TABLE users ADD COLUMN show_all_vehicles INTEGER NOT NULL DEFAULT 0")
         vehicle_columns = {r["name"] for r in c.execute("PRAGMA table_info(vehicles)")}
         if "owner_id" not in vehicle_columns:
             c.execute("ALTER TABLE vehicles ADD COLUMN owner_id INTEGER REFERENCES users(id)")
@@ -279,7 +283,7 @@ def verify_password(password: str, expected: str, salt: str) -> bool:
     return hmac.compare_digest(digest, expected)
 
 def public_user(row: sqlite3.Row) -> dict[str, Any]:
-    return {"id": row["id"], "username": row["username"], "is_admin": bool(row["is_admin"]), "active": bool(row["active"])}
+    return {"id": row["id"], "username": row["username"], "is_admin": bool(row["is_admin"]), "active": bool(row["active"]), "show_all_vehicles": bool(row["show_all_vehicles"])}
 
 def current_user(request: Request, admin: bool = False) -> sqlite3.Row:
     token = request.cookies.get(COOKIE)
@@ -306,7 +310,7 @@ def set_session(response: Response, user_id: int):
                         secure=os.getenv("GARAGE_COOKIE_SECURE", "false").lower() == "true", path="/")
 
 def vehicle_accessible(row: sqlite3.Row, user: sqlite3.Row) -> bool:
-    return bool(user["is_admin"] or not row["private"] or row["owner_id"] == user["id"])
+    return bool(not row["private"] or row["owner_id"] == user["id"] or (user["is_admin"] and user["show_all_vehicles"]))
 
 def get_visible_vehicle(c: sqlite3.Connection, vehicle_id: int, user: sqlite3.Row) -> sqlite3.Row:
     row = c.execute("SELECT * FROM vehicles WHERE id=?", (vehicle_id,)).fetchone()
@@ -442,6 +446,16 @@ def logout(request: Request, response: Response):
 @app.get("/api/me")
 def me(request: Request):
     return public_user(current_user(request))
+
+class VehicleViewIn(BaseModel):
+    show_all: bool
+
+@app.put("/api/me/vehicle-view")
+def set_vehicle_view(body: VehicleViewIn, request: Request):
+    user=current_user(request, True)
+    with db() as c:
+        c.execute("UPDATE users SET show_all_vehicles=? WHERE id=?",(int(body.show_all),user["id"]))
+        return public_user(c.execute("SELECT * FROM users WHERE id=?",(user["id"],)).fetchone())
 
 def mileage_estimate(c, vehicle_id: int, today: date | None = None) -> dict[str, Any]:
     today = today or datetime.now(timezone.utc).date()
