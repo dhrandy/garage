@@ -36,3 +36,8 @@
 .topbar [data-action=refresh]:after{content:'↻';font-size:21px}
 .topbar [data-action=toggle-menu]:after{content:'☰';font-size:21px}
 }
+
+@media(max-width:650px){
+.tabs{overflow-x:auto;scrollbar-width:thin}
+.tab{flex:0 0 auto;min-width:max-content;padding:10px 12px}
+}
