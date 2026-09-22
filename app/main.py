@@ -181,6 +181,7 @@ def init_db():
           coolant_type TEXT NOT NULL DEFAULT '',
           brake_fluid TEXT NOT NULL DEFAULT '',
           air_filter_part_number TEXT NOT NULL DEFAULT '',
+          wheel_lug_torque TEXT NOT NULL DEFAULT '',
           updated_at TEXT NOT NULL DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS services (
@@ -406,7 +407,7 @@ class VehicleIn(BaseModel):
     tire_size: str = Field(default="", max_length=80)
     oil_spec: str = Field(default="", max_length=120)
 
-SPEC_FIELDS = ("engine","displacement","transmission","drivetrain","body_style","exterior_color","vin","horsepower","torque","curb_weight","wheelbase","dimensions","fuel_capacity","towing_capacity","payload","mpg_city","mpg_highway","oil_type","oil_capacity","battery_group","spark_plugs","wiper_sizes","coolant_type","brake_fluid","air_filter_part_number")
+SPEC_FIELDS = ("engine","displacement","transmission","drivetrain","body_style","exterior_color","vin","horsepower","torque","curb_weight","wheelbase","dimensions","fuel_capacity","towing_capacity","payload","mpg_city","mpg_highway","oil_type","oil_capacity","battery_group","spark_plugs","wiper_sizes","coolant_type","brake_fluid","air_filter_part_number","wheel_lug_torque")
 
 class VehicleSpecsIn(BaseModel):
     engine: str = Field(default="", max_length=160)
@@ -434,6 +435,7 @@ class VehicleSpecsIn(BaseModel):
     coolant_type: str = Field(default="", max_length=120)
     brake_fluid: str = Field(default="", max_length=80)
     air_filter_part_number: str = Field(default="", max_length=120)
+    wheel_lug_torque: str = Field(default="", max_length=80)
 
 class ServiceIn(BaseModel):
     vehicle_id: int
