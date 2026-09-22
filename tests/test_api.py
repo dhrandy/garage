@@ -527,3 +527,32 @@ def test_backup_is_admin_only_and_round_trips_current_fields(tmp_path):
         member.post('/api/login',json={'username':'member','password':'password-123'})
         assert member.get('/api/export').status_code==403
         assert member.post('/api/import',json=backup).status_code==403
+
+
+def test_v1_mods_endpoint_lists_and_creates(tmp_path):
+    main.DB_PATH=tmp_path/'v1-mods.db'; main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup',json={'username':'admin','password':'password-123'})
+        token=admin.post('/api/tokens',json={'name':'mods'}).json()['token']
+        auth={'Authorization':f'Bearer {token}'}
+        created=admin.post('/api/v1/vehicles/1/mods',headers=auth,json={'name':'Radio','price':229.96,'date':None,'gotchas':'Use harness'})
+        assert created.status_code==201
+        assert created.json()['name']=='Radio' and created.json()['date'] is None and created.json()['price']==229.96
+        rows=admin.get('/api/v1/vehicles/1/mods',headers=auth)
+        assert rows.status_code==200 and rows.json()[0]['gotchas']=='Use harness'
+        assert admin.get('/api/v1/vehicles/1/mods').status_code==401
+        assert admin.post('/api/v1/vehicles/999/mods',headers=auth,json={'name':'Nope'}).status_code==404
+
+
+def test_vehicle_specs_tab_api_and_token_write(tmp_path):
+    main.DB_PATH=tmp_path/'full-specs.db'; main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup',json={'username':'admin','password':'password-123'})
+        assert admin.get('/api/vehicles/1/specs').json()['engine']==''
+        saved=admin.put('/api/vehicles/1/specs',json={'engine':'2.0L inline-4','transmission':'5-speed manual','drivetrain':'RWD','curb_weight':'2,116 lb','displacement':'1.6L','mpg_city':'22','mpg_highway':'30','oil_type':'10W-30','oil_capacity':'3.4 qt','battery_group':'51R','spark_plugs':'NGK BKR6E-11','wiper_sizes':'18 / 18','coolant_type':'ethylene glycol','brake_fluid':'DOT 3','air_filter_part_number':'CA7598'})
+        assert saved.status_code==200 and saved.json()['drivetrain']=='RWD'
+        token=admin.post('/api/tokens',json={'name':'specs'}).json()['token'];auth={'Authorization':f'Bearer {token}'}
+        updated=admin.put('/api/v1/vehicles/1/specs',headers=auth,json={**saved.json(),'horsepower':'116 hp'})
+        assert updated.status_code==200 and updated.json()['horsepower']=='116 hp' and updated.json()['battery_group']=='51R'
+        assert admin.get('/api/v1/vehicles/1/specs',headers=auth).json()['engine']=='2.0L inline-4'
+        assert admin.put('/api/v1/vehicles/999/specs',headers=auth,json={'engine':'x'}).status_code==404
