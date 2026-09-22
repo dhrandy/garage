@@ -148,6 +148,9 @@ def init_db():
           added_by INTEGER REFERENCES users(id),
           owner_id INTEGER REFERENCES users(id),
           private INTEGER NOT NULL DEFAULT 0,
+          fuel_type TEXT NOT NULL DEFAULT '',
+          tire_size TEXT NOT NULL DEFAULT '',
+          oil_spec TEXT NOT NULL DEFAULT '',
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
@@ -191,6 +194,10 @@ def init_db():
           mod_date TEXT,
           price REAL NOT NULL DEFAULT 0 CHECK(price >= 0),
           logged_by INTEGER REFERENCES users(id),
+          torque_specs TEXT NOT NULL DEFAULT '',
+          fluids TEXT NOT NULL DEFAULT '',
+          gotchas TEXT NOT NULL DEFAULT '',
+          youtube_url TEXT NOT NULL DEFAULT '',
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
@@ -242,6 +249,11 @@ def init_db():
             c.execute("ALTER TABLE vehicles ADD COLUMN owner_id INTEGER REFERENCES users(id)")
         if "private" not in vehicle_columns:
             c.execute("ALTER TABLE vehicles ADD COLUMN private INTEGER NOT NULL DEFAULT 0")
+        for col in ("fuel_type","tire_size","oil_spec"):
+            if col not in vehicle_columns: c.execute(f"ALTER TABLE vehicles ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+        mod_columns={r["name"] for r in c.execute("PRAGMA table_info(modifications)")}
+        for col in ("torque_specs","fluids","gotchas","youtube_url"):
+            if col not in mod_columns: c.execute(f"ALTER TABLE modifications ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
         admin = c.execute("SELECT id FROM users WHERE is_admin=1 ORDER BY id LIMIT 1").fetchone()
         if admin:
             c.execute("UPDATE vehicles SET owner_id=? WHERE owner_id IS NULL", (admin["id"],))
@@ -344,6 +356,9 @@ class VehicleIn(BaseModel):
     icon: str = Field(default="🚗", max_length=8)
     owner_id: int | None = None
     private: bool = False
+    fuel_type: str = Field(default="", max_length=80)
+    tire_size: str = Field(default="", max_length=80)
+    oil_spec: str = Field(default="", max_length=120)
 
 class ServiceIn(BaseModel):
     vehicle_id: int
@@ -485,7 +500,7 @@ def vehicle_dict(c, row):
     return {"id":row["id"],"name":row["name"],"year":row["year"],"mileage":row["mileage"],"icon":row["icon"],
             "est_mileage":est["est_mileage"],"miles_per_day":est["miles_per_day"],"photo_receipt_id":row["photo_receipt_id"],
             "photo_url":f"/api/receipts/{row['photo_receipt_id']}" if row["photo_receipt_id"] else None,
-            "added_by":display_user(c,row["added_by"]) or "System", "owner_id":row["owner_id"], "owner":display_user(c,row["owner_id"]) or "System", "private":bool(row["private"]),
+            "added_by":display_user(c,row["added_by"]) or "System", "owner_id":row["owner_id"], "owner":display_user(c,row["owner_id"]) or "System", "private":bool(row["private"]), "fuel_type":row["fuel_type"], "tire_size":row["tire_size"], "oil_spec":row["oil_spec"],
             "mileage_updated_by": (lambda r: display_user(c, r["recorded_by"]) if r else "")(c.execute("SELECT recorded_by FROM mileage_updates WHERE vehicle_id=? ORDER BY id DESC LIMIT 1", (row["id"],)).fetchone()),
             "created_at":row["created_at"],"updated_at":row["updated_at"]}
 
@@ -500,8 +515,8 @@ def add_vehicle(body: VehicleIn, request: Request):
     with db() as c:
         owner_id=body.owner_id if user["is_admin"] and body.owner_id else user["id"]
         if not c.execute("SELECT 1 FROM users WHERE id=? AND active=1",(owner_id,)).fetchone(): raise HTTPException(400,"Owner not found")
-        cur=c.execute("INSERT INTO vehicles(name,year,mileage,icon,added_by,owner_id,private,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                      (body.name.strip(),body.year.strip(),body.mileage,body.icon,user["id"],owner_id,int(body.private),stamp,stamp))
+        cur=c.execute("INSERT INTO vehicles(name,year,mileage,icon,added_by,owner_id,private,fuel_type,tire_size,oil_spec,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                      (body.name.strip(),body.year.strip(),body.mileage,body.icon,user["id"],owner_id,int(body.private),body.fuel_type.strip(),body.tire_size.strip(),body.oil_spec.strip(),stamp,stamp))
         row=c.execute("SELECT * FROM vehicles WHERE id=?",(cur.lastrowid,)).fetchone(); return vehicle_dict(c,row)
 
 @app.put("/api/vehicles/{item_id}")
@@ -511,8 +526,8 @@ def update_vehicle(item_id:int, body:VehicleIn, request:Request):
         old=get_visible_vehicle(c,item_id,user)
         if old["owner_id"] != user["id"] and not user["is_admin"]: raise HTTPException(403,"Only the owner or an administrator can edit this vehicle")
         owner_id=body.owner_id if user["is_admin"] and body.owner_id else old["owner_id"] or user["id"]
-        cur=c.execute("UPDATE vehicles SET name=?,year=?,mileage=?,icon=?,owner_id=?,private=?,updated_at=? WHERE id=?",
-                      (body.name.strip(),body.year.strip(),body.mileage,body.icon,owner_id,int(body.private),stamp,item_id))
+        cur=c.execute("UPDATE vehicles SET name=?,year=?,mileage=?,icon=?,owner_id=?,private=?,fuel_type=?,tire_size=?,oil_spec=?,updated_at=? WHERE id=?",
+                      (body.name.strip(),body.year.strip(),body.mileage,body.icon,owner_id,int(body.private),body.fuel_type.strip(),body.tire_size.strip(),body.oil_spec.strip(),stamp,item_id))
         if body.mileage != old["mileage"]:
             c.execute("INSERT INTO mileage_updates(vehicle_id,mileage,recorded_by,recorded_at) VALUES(?,?,?,?)",
                       (item_id,body.mileage,user["id"],stamp))
@@ -981,10 +996,14 @@ class ModIn(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     date: str | None = None
     price: float = Field(default=0, ge=0)
+    torque_specs: str = Field(default="", max_length=500)
+    fluids: str = Field(default="", max_length=500)
+    gotchas: str = Field(default="", max_length=1000)
+    youtube_url: str = Field(default="", max_length=500)
 
 def mod_dict(c, row):
     return {"id":row["id"],"vehicle_id":row["vehicle_id"],"name":row["name"],"date":row["mod_date"],"price":row["price"],
-            "logged_by":display_user(c,row["logged_by"]),"created_at":row["created_at"],"updated_at":row["updated_at"]}
+            "logged_by":display_user(c,row["logged_by"]),"torque_specs":row["torque_specs"],"fluids":row["fluids"],"gotchas":row["gotchas"],"youtube_url":row["youtube_url"],"created_at":row["created_at"],"updated_at":row["updated_at"]}
 
 @app.get("/api/mods")
 def list_mods(request:Request,vehicle_id:int|None=None):
@@ -1000,8 +1019,8 @@ def add_mod(body:ModIn,request:Request):
     with db() as c:
         get_visible_vehicle(c,body.vehicle_id,user)
         get_vehicle_or_404(c,body.vehicle_id)
-        cur=c.execute("INSERT INTO modifications(vehicle_id,name,mod_date,price,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
-                      (body.vehicle_id,body.name.strip(),body.date or None,body.price,user["id"],stamp,stamp))
+        cur=c.execute("INSERT INTO modifications(vehicle_id,name,mod_date,price,logged_by,torque_specs,fluids,gotchas,youtube_url,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                      (body.vehicle_id,body.name.strip(),body.date or None,body.price,user["id"],body.torque_specs.strip(),body.fluids.strip(),body.gotchas.strip(),body.youtube_url.strip(),stamp,stamp))
         return mod_dict(c,c.execute("SELECT * FROM modifications WHERE id=?",(cur.lastrowid,)).fetchone())
 
 @app.put("/api/mods/{item_id}")
@@ -1009,8 +1028,8 @@ def update_mod(item_id:int,body:ModIn,request:Request):
     user=current_user(request)
     with db() as c:
         get_visible_vehicle(c,body.vehicle_id,user)
-        cur=c.execute("UPDATE modifications SET vehicle_id=?,name=?,mod_date=?,price=?,updated_at=? WHERE id=?",
-                      (body.vehicle_id,body.name.strip(),body.date or None,body.price,now_iso(),item_id))
+        cur=c.execute("UPDATE modifications SET vehicle_id=?,name=?,mod_date=?,price=?,torque_specs=?,fluids=?,gotchas=?,youtube_url=?,updated_at=? WHERE id=?",
+                      (body.vehicle_id,body.name.strip(),body.date or None,body.price,body.torque_specs.strip(),body.fluids.strip(),body.gotchas.strip(),body.youtube_url.strip(),now_iso(),item_id))
         if not cur.rowcount: raise HTTPException(404,"Modification not found")
         return mod_dict(c,c.execute("SELECT * FROM modifications WHERE id=?",(item_id,)).fetchone())
 
