@@ -31,3 +31,8 @@
 
 .vehicle-specs{display:flex;gap:10px;flex-wrap:wrap;margin:-7px 0 17px}.vehicle-specs>div{display:flex;gap:7px;align-items:center;padding:7px 10px;background:var(--panel2);border:1px solid var(--line);border-radius:9px}.vehicle-specs dt,.mod-details dt{color:var(--muted);font-size:12px;font-weight:700}.vehicle-specs dd,.mod-details dd{margin:0}.mod-details{margin-top:11px;padding:9px 11px;background:#101722;border:1px solid var(--line);border-radius:9px}.mod-details summary{cursor:pointer;font-weight:700}.mod-details dl{display:grid;gap:7px;margin:9px 0 0}.mod-details dl>div{display:grid;grid-template-columns:70px 1fr;gap:8px}.mod-details a{color:var(--accent)}
 @media(max-width:650px){.vehicle-specs{display:grid;grid-template-columns:1fr;margin-top:0}.mod-details dl>div{grid-template-columns:60px 1fr}}
+
+@media(max-width:650px){
+.topbar [data-action=refresh]:after{content:'↻';font-size:21px}
+.topbar [data-action=toggle-menu]:after{content:'☰';font-size:21px}
+}
