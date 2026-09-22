@@ -154,6 +154,35 @@ def init_db():
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS vehicle_specs (
+          vehicle_id INTEGER PRIMARY KEY REFERENCES vehicles(id) ON DELETE CASCADE,
+          engine TEXT NOT NULL DEFAULT '',
+          displacement TEXT NOT NULL DEFAULT '',
+          transmission TEXT NOT NULL DEFAULT '',
+          drivetrain TEXT NOT NULL DEFAULT '',
+          body_style TEXT NOT NULL DEFAULT '',
+          exterior_color TEXT NOT NULL DEFAULT '',
+          vin TEXT NOT NULL DEFAULT '',
+          horsepower TEXT NOT NULL DEFAULT '',
+          torque TEXT NOT NULL DEFAULT '',
+          curb_weight TEXT NOT NULL DEFAULT '',
+          wheelbase TEXT NOT NULL DEFAULT '',
+          dimensions TEXT NOT NULL DEFAULT '',
+          fuel_capacity TEXT NOT NULL DEFAULT '',
+          towing_capacity TEXT NOT NULL DEFAULT '',
+          payload TEXT NOT NULL DEFAULT '',
+          mpg_city TEXT NOT NULL DEFAULT '',
+          mpg_highway TEXT NOT NULL DEFAULT '',
+          oil_type TEXT NOT NULL DEFAULT '',
+          oil_capacity TEXT NOT NULL DEFAULT '',
+          battery_group TEXT NOT NULL DEFAULT '',
+          spark_plugs TEXT NOT NULL DEFAULT '',
+          wiper_sizes TEXT NOT NULL DEFAULT '',
+          coolant_type TEXT NOT NULL DEFAULT '',
+          brake_fluid TEXT NOT NULL DEFAULT '',
+          air_filter_part_number TEXT NOT NULL DEFAULT '',
+          updated_at TEXT NOT NULL DEFAULT ''
+        );
         CREATE TABLE IF NOT EXISTS services (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
@@ -257,6 +286,9 @@ def init_db():
             c.execute("ALTER TABLE vehicles ADD COLUMN private INTEGER NOT NULL DEFAULT 0")
         for col in ("fuel_type","tire_size","oil_spec"):
             if col not in vehicle_columns: c.execute(f"ALTER TABLE vehicles ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+        spec_columns={r["name"] for r in c.execute("PRAGMA table_info(vehicle_specs)")}
+        for col in SPEC_FIELDS:
+            if col not in spec_columns: c.execute(f"ALTER TABLE vehicle_specs ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
         mod_columns={r["name"] for r in c.execute("PRAGMA table_info(modifications)")}
         for col in ("torque_specs","fluids","gotchas","youtube_url"):
             if col not in mod_columns: c.execute(f"ALTER TABLE modifications ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
@@ -373,6 +405,35 @@ class VehicleIn(BaseModel):
     fuel_type: str = Field(default="", max_length=80)
     tire_size: str = Field(default="", max_length=80)
     oil_spec: str = Field(default="", max_length=120)
+
+SPEC_FIELDS = ("engine","displacement","transmission","drivetrain","body_style","exterior_color","vin","horsepower","torque","curb_weight","wheelbase","dimensions","fuel_capacity","towing_capacity","payload","mpg_city","mpg_highway","oil_type","oil_capacity","battery_group","spark_plugs","wiper_sizes","coolant_type","brake_fluid","air_filter_part_number")
+
+class VehicleSpecsIn(BaseModel):
+    engine: str = Field(default="", max_length=160)
+    displacement: str = Field(default="", max_length=80)
+    transmission: str = Field(default="", max_length=160)
+    drivetrain: str = Field(default="", max_length=80)
+    body_style: str = Field(default="", max_length=120)
+    exterior_color: str = Field(default="", max_length=120)
+    vin: str = Field(default="", max_length=40)
+    horsepower: str = Field(default="", max_length=80)
+    torque: str = Field(default="", max_length=80)
+    curb_weight: str = Field(default="", max_length=80)
+    wheelbase: str = Field(default="", max_length=80)
+    dimensions: str = Field(default="", max_length=160)
+    fuel_capacity: str = Field(default="", max_length=80)
+    towing_capacity: str = Field(default="", max_length=80)
+    payload: str = Field(default="", max_length=80)
+    mpg_city: str = Field(default="", max_length=40)
+    mpg_highway: str = Field(default="", max_length=40)
+    oil_type: str = Field(default="", max_length=80)
+    oil_capacity: str = Field(default="", max_length=80)
+    battery_group: str = Field(default="", max_length=80)
+    spark_plugs: str = Field(default="", max_length=160)
+    wiper_sizes: str = Field(default="", max_length=120)
+    coolant_type: str = Field(default="", max_length=120)
+    brake_fluid: str = Field(default="", max_length=80)
+    air_filter_part_number: str = Field(default="", max_length=120)
 
 class ServiceIn(BaseModel):
     vehicle_id: int
@@ -615,6 +676,32 @@ def service_dict(c,row):
             "type":row["service_type"],"cost":row["cost"],"provider":row["provider"],"notes":row["notes"],
             "torque_specs":row["torque_specs"],"fluids":row["fluids"],"gotchas":row["gotchas"],"youtube_url":row["youtube_url"],
             "logged_by":display_user(c,row["logged_by"]),"logged_by_id":row["logged_by"],"reminder_id":row["reminder_id"],"created_at":row["created_at"],"updated_at":row["updated_at"]}
+
+def specs_dict(row):
+    return {k:(row[k] if row else "") for k in SPEC_FIELDS}
+
+def save_specs(c, vehicle_id: int, body: VehicleSpecsIn):
+    values=[getattr(body,k).strip() for k in SPEC_FIELDS]
+    columns=",".join(("vehicle_id",*SPEC_FIELDS,"updated_at"))
+    marks=",".join("?" for _ in range(len(SPEC_FIELDS)+2))
+    updates=",".join(f"{k}=excluded.{k}" for k in (*SPEC_FIELDS,"updated_at"))
+    c.execute(f"INSERT INTO vehicle_specs({columns}) VALUES({marks}) ON CONFLICT(vehicle_id) DO UPDATE SET {updates}", (vehicle_id,*values,now_iso()))
+    return specs_dict(c.execute("SELECT * FROM vehicle_specs WHERE vehicle_id=?",(vehicle_id,)).fetchone())
+
+@app.get("/api/vehicles/{vehicle_id}/specs")
+def get_specs(vehicle_id:int, request:Request):
+    user=current_user(request)
+    with db() as c:
+        get_visible_vehicle(c,vehicle_id,user)
+        return specs_dict(c.execute("SELECT * FROM vehicle_specs WHERE vehicle_id=?",(vehicle_id,)).fetchone())
+
+@app.put("/api/vehicles/{vehicle_id}/specs")
+def put_specs(vehicle_id:int, body:VehicleSpecsIn, request:Request):
+    user=current_user(request)
+    with db() as c:
+        vehicle=get_visible_vehicle(c,vehicle_id,user)
+        if vehicle["owner_id"] != user["id"] and not user["is_admin"]: raise HTTPException(403,"Only the owner or an administrator can edit this vehicle")
+        return save_specs(c,vehicle_id,body)
 
 @app.get("/api/services")
 def list_services(request:Request, vehicle_id:int|None=None):
@@ -1108,6 +1195,14 @@ def delete_mod(item_id:int,request:Request):
         if not c.execute("DELETE FROM modifications WHERE id=?",(item_id,)).rowcount: raise HTTPException(404,"Modification not found")
     return {"ok":True}
 
+class ModV1In(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    date: str | None = None
+    price: float = Field(default=0, ge=0)
+    torque_specs: str = Field(default="", max_length=500)
+    gotchas: str = Field(default="", max_length=1000)
+    youtube_url: str = Field(default="", max_length=500)
+
 class ServiceV1In(BaseModel):
     date: str
     mileage: int = Field(default=0, ge=0)
@@ -1123,6 +1218,21 @@ def v1_list_vehicles(request: Request):
     with db() as c:
         user=token_user(c,token)
         return [vehicle_dict(c, r) for r in c.execute("SELECT * FROM vehicles ORDER BY id") if vehicle_accessible(r,user)]
+
+@app.get("/api/v1/vehicles/{vehicle_id}/specs")
+def v1_get_specs(vehicle_id:int, request:Request):
+    token=token_auth(request)
+    with db() as c:
+        user=token_user(c,token); get_visible_vehicle(c,vehicle_id,user)
+        return specs_dict(c.execute("SELECT * FROM vehicle_specs WHERE vehicle_id=?",(vehicle_id,)).fetchone())
+
+@app.put("/api/v1/vehicles/{vehicle_id}/specs")
+def v1_put_specs(vehicle_id:int, body:VehicleSpecsIn, request:Request):
+    token=token_auth(request)
+    with db() as c:
+        user=token_user(c,token); vehicle=get_visible_vehicle(c,vehicle_id,user)
+        if vehicle["owner_id"] != user["id"] and not user["is_admin"]: raise HTTPException(403,"Only the owner or an administrator can edit this vehicle")
+        return save_specs(c,vehicle_id,body)
 
 @app.get("/api/v1/vehicles/{vehicle_id}/services")
 def v1_list_services(vehicle_id: int, request: Request):
@@ -1145,6 +1255,25 @@ def v1_maintenance(vehicle_id: int, request: Request):
             st = reminder_status(mileage, r)
             out.append({**reminder_dict(r), "status": st["state"], "progress": st["progress"], "label": st["label"]})
         return out
+
+@app.get("/api/v1/vehicles/{vehicle_id}/mods")
+def v1_list_mods(vehicle_id: int, request: Request):
+    token=token_auth(request)
+    with db() as c:
+        user=token_user(c,token)
+        get_visible_vehicle(c, vehicle_id, user)
+        rows=c.execute("SELECT * FROM modifications WHERE vehicle_id=? ORDER BY COALESCE(mod_date,'') DESC,id DESC", (vehicle_id,))
+        return [mod_dict(c,r) for r in rows]
+
+@app.post("/api/v1/vehicles/{vehicle_id}/mods", status_code=201)
+def v1_add_mod(vehicle_id: int, body: ModV1In, request: Request):
+    token=token_auth(request); stamp=now_iso()
+    with db() as c:
+        user=token_user(c,token)
+        get_visible_vehicle(c, vehicle_id, user)
+        cur=c.execute("INSERT INTO modifications(vehicle_id,name,mod_date,price,logged_by,torque_specs,fluids,gotchas,youtube_url,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                      (vehicle_id,body.name.strip(),body.date or None,body.price,token["created_by"],body.torque_specs.strip(),"",body.gotchas.strip(),body.youtube_url.strip(),stamp,stamp))
+        return mod_dict(c,c.execute("SELECT * FROM modifications WHERE id=?",(cur.lastrowid,)).fetchone())
 
 @app.get("/api/v1/vehicles/{vehicle_id}/fuel")
 def v1_list_fuel(vehicle_id: int, request: Request):
@@ -1344,8 +1473,8 @@ def send_test_notification(request: Request):
         raise HTTPException(502, detail or "Notification delivery failed")
     return {"ok": True}
 
-BACKUP_TABLES = ("settings", "users", "vehicles", "services", "fuel_entries", "notes", "modifications", "receipts", "mileage_updates", "reminders")
-BACKUP_DELETE_ORDER = ("receipts", "services", "fuel_entries", "notes", "modifications", "mileage_updates", "reminders", "vehicles", "users", "settings")
+BACKUP_TABLES = ("settings", "users", "vehicles", "vehicle_specs", "services", "fuel_entries", "notes", "modifications", "receipts", "mileage_updates", "reminders")
+BACKUP_DELETE_ORDER = ("receipts", "services", "vehicle_specs", "fuel_entries", "notes", "modifications", "mileage_updates", "reminders", "vehicles", "users", "settings")
 
 @app.get("/api/export")
 def export_data(request:Request):
