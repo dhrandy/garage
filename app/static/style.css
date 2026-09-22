@@ -19,3 +19,6 @@
 
 /* Keep card cost details compact and visually tied to the status above. */
 .vc-cost{width:max-content;min-width:150px;max-width:100%;grid-template-columns:minmax(56px,auto) auto;column-gap:18px;row-gap:2px;margin-top:7px;padding-top:7px}.vc-cost>div{display:contents}.vc-cost>div>span:last-child,.vc-cost>div>strong{justify-self:end}.vc-cost>div:first-child>span,.vc-cost>div:first-child>strong{color:var(--text)}
+
+
+.vehicle-view-toggle{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:-10px 0 18px}.vehicle-view-toggle .check-row{margin:0!important;padding:8px 11px;background:var(--panel2);border:1px solid var(--line);border-radius:9px}.vehicle-view-toggle>.hint{font-size:13px}
