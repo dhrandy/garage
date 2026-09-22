@@ -556,3 +556,14 @@ def test_vehicle_specs_tab_api_and_token_write(tmp_path):
         assert updated.status_code==200 and updated.json()['horsepower']=='116 hp' and updated.json()['battery_group']=='51R' and updated.json()['wheel_lug_torque']=='80 lb-ft' and updated.json()['wheel_size']=='15 × 6 in'
         assert admin.get('/api/v1/vehicles/1/specs',headers=auth).json()['engine']=='2.0L inline-4'
         assert admin.put('/api/v1/vehicles/999/specs',headers=auth,json={'engine':'x'}).status_code==404
+
+
+def test_swagger_docs_csp_allows_required_assets(tmp_path):
+    main.DB_PATH=tmp_path/'docs.db'; main.init_db()
+    with TestClient(main.app) as client:
+        docs=client.get('/api/docs')
+        assert docs.status_code==200 and 'Swagger UI' in docs.text
+        csp=docs.headers['content-security-policy']
+        assert 'https://cdn.jsdelivr.net' in csp and 'https://fastapi.tiangolo.com' in csp
+        assert "script-src 'self' https://cdn.jsdelivr.net" in csp
+        assert 'https://cdn.jsdelivr.net' not in client.get('/api/status').headers['content-security-policy']
