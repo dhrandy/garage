@@ -400,3 +400,17 @@ def test_admin_vehicle_view_defaults_filtered_and_persists(tmp_path):
         friend_client.post('/api/login',json={'username':'friend','password':'password-456'})
         assert friend_client.put('/api/me/vehicle-view',json={'show_all':True}).status_code==403
         assert 'Friend private' in {v['name'] for v in friend_client.get('/api/vehicles').json()}
+
+
+def test_vehicle_specs_and_mod_install_notes(tmp_path):
+    main.DB_PATH=tmp_path/'specs.db'; main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup',json={'username':'admin','password':'password-123'})
+        vehicle=admin.post('/api/vehicles',json={'name':'Miata','fuel_type':'Premium gasoline','tire_size':'205/45R17','oil_spec':'5W-30, 4.8 qt'}).json()
+        assert vehicle['fuel_type']=='Premium gasoline' and vehicle['tire_size']=='205/45R17' and vehicle['oil_spec']=='5W-30, 4.8 qt'
+        vehicle=admin.put(f"/api/vehicles/{vehicle['id']}",json={**vehicle,'oil_spec':''}).json()
+        assert vehicle['oil_spec']==''
+        mod=admin.post('/api/mods',json={'vehicle_id':vehicle['id'],'name':'Coilovers','price':900,'torque_specs':'Top nuts 30 lb-ft','fluids':'Anti-seize','gotchas':'Support the hub','youtube_url':'https://youtube.com/watch?v=test'}).json()
+        assert mod['torque_specs']=='Top nuts 30 lb-ft' and mod['youtube_url'].startswith('https://youtube.com/')
+        mod=admin.put(f"/api/mods/{mod['id']}",json={**mod,'fluids':''}).json()
+        assert mod['fluids']=='' and mod['gotchas']=='Support the hub'
