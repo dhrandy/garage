@@ -512,7 +512,9 @@ def test_backup_is_admin_only_and_round_trips_current_fields(tmp_path):
         admin.post('/api/fuel',json={'vehicle_id':vehicle['id'],'date':'2026-09-22','odometer':12,'gallons':1,'cost':4,'octane':'93'})
         assert admin.post('/api/receipts',data={'kind':'service','entry_id':service['id']},files={'file':('r.png',b'png','image/png')}).status_code==201
         admin.post('/api/users',json={'username':'member','password':'password-123','is_admin':False})
-        backup=admin.get('/api/export').json()
+        exported=admin.get('/api/export')
+        assert exported.status_code==200, exported.text
+        backup=exported.json()
         assert backup['version']==3 and backup['tables']['notes'] and backup['tables']['modifications']
         assert backup['tables']['reminders'][0]['repeats_yearly']==1 and backup['tables']['fuel_entries'][0]['octane']=='93'
         assert backup['tables']['services'][0]['fluids']=='5 qt' and backup['receipt_files']
