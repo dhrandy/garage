@@ -195,6 +195,13 @@ def test_service_can_reset_maintenance_item(tmp_path):
                              json={'date':'2026-09-21','mileage':24100,'type':'Oil change','reminder_id':reminder['id']})
         assert via_api.status_code == 201
         assert admin.get('/api/reminders?vehicle_id=1').json()[0]['last_mileage'] == 24100
+        undated = admin.post('/api/services', json={'vehicle_id':1,'date':None,'mileage':24200,'type':'Undated service','reminder_id':reminder['id']})
+        assert undated.status_code == 200 and undated.json()['date'] is None and undated.json()['reminder_id'] is None
+        assert admin.get('/api/reminders?vehicle_id=1').json()[0]['last_mileage'] == 24100
+        undated_v1 = admin.post('/api/v1/vehicles/1/services', headers={'Authorization': f'Bearer {token}'},
+                                json={'mileage':24300,'type':'Undated API service','reminder_id':reminder['id']})
+        assert undated_v1.status_code == 201 and undated_v1.json()['date'] is None and undated_v1.json()['reminder_id'] is None
+        assert admin.get('/api/reminders?vehicle_id=1').json()[0]['last_mileage'] == 24100
 
 
 def test_estimated_mileage_from_fillups_and_services(tmp_path):
@@ -505,6 +512,8 @@ def test_backup_is_admin_only_and_round_trips_current_fields(tmp_path):
     with TestClient(main.app) as admin:
         admin.post('/api/setup',json={'username':'admin','password':'password-123'})
         vehicle=admin.post('/api/vehicles',json={'name':'2024 Backup Car','year':'2024','mileage':10,'private':True,'fuel_type':'Premium','tire_size':'225/45R17','oil_spec':'5W-30'}).json()
+        specs=admin.put(f"/api/vehicles/{vehicle['id']}/specs",json={'wheel_size':'17 × 7.5 in'}).json()
+        assert specs['wheel_size']=='17 × 7.5 in'
         service=admin.post('/api/services',json={'vehicle_id':vehicle['id'],'date':'2026-09-22','mileage':11,'type':'Oil','cost':40,'torque_specs':'29 lb-ft','fluids':'5 qt','gotchas':'washer','youtube_url':'https://youtube.com/watch?v=x'}).json()
         admin.post('/api/reminders',json={'vehicle_id':vehicle['id'],'name':'Tag','due_date':'2026-10-01','repeats_yearly':True,'last_date':'2026-01-01','last_mileage':0})
         admin.post('/api/notes',json={'vehicle_id':vehicle['id'],'date':'2026-09-22','body':'note'})
@@ -518,11 +527,15 @@ def test_backup_is_admin_only_and_round_trips_current_fields(tmp_path):
         assert backup['version']==3 and backup['tables']['notes'] and backup['tables']['modifications']
         assert backup['tables']['reminders'][0]['repeats_yearly']==1 and backup['tables']['fuel_entries'][0]['octane']=='93'
         assert backup['tables']['services'][0]['fluids']=='5 qt' and backup['receipt_files']
+        assert next(row for row in backup['tables']['vehicles'] if row['id']==vehicle['id'])['tire_size']=='225/45R17'
+        assert next(row for row in backup['tables']['vehicle_specs'] if row['vehicle_id']==vehicle['id'])['wheel_size']=='17 × 7.5 in'
         restored=admin.post('/api/import',json=backup)
         assert restored.status_code==200 and restored.json()['version']==3
         assert admin.post('/api/login',json={'username':'admin','password':'password-123'}).status_code==200
         again=admin.get('/api/export').json()
         assert again['tables']['services'][0]['fluids']=='5 qt' and again['receipt_files']==backup['receipt_files']
+        assert next(row for row in again['tables']['vehicles'] if row['id']==vehicle['id'])['tire_size']=='225/45R17'
+        assert next(row for row in again['tables']['vehicle_specs'] if row['vehicle_id']==vehicle['id'])['wheel_size']=='17 × 7.5 in'
     with TestClient(main.app) as member:
         member.post('/api/login',json={'username':'member','password':'password-123'})
         assert member.get('/api/export').status_code==403
