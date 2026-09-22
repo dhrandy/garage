@@ -443,3 +443,20 @@ def test_yearly_and_service_reminder_shapes(tmp_path):
         assert service['miles_interval']==5000 and service['due_date'] is None
         changed=admin.put(f"/api/reminders/{renewal['id']}",json={**renewal,'repeats_yearly':False}).json()
         assert changed['repeats_yearly'] is False
+
+def test_private_vehicle_receipts_are_not_exposed(tmp_path):
+    main.DB_PATH=tmp_path/'receipt-auth.db'; main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup',json={'username':'admin','password':'password-123'})
+        private=admin.post('/api/vehicles',json={'year':2020,'make':'Private','model':'Car','mileage':1,'private':True}).json()
+        fuel=admin.post('/api/fuel',json={'vehicle_id':private['id'],'date':'2026-09-21','odometer':2,'gallons':1,'cost':1}).json()
+        admin.post('/api/users',json={'username':'member','password':'password-123','is_admin':False})
+        upload=admin.post('/api/receipts',data={'kind':'fuel','entry_id':fuel['id']},files={'file':('receipt.png',b'png','image/png')})
+        receipt_id=upload.json()['id']
+    with TestClient(main.app) as member:
+        member.post('/api/login',json={'username':'member','password':'password-123'})
+        assert member.get('/api/receipts').json()==[]
+        assert member.get(f'/api/receipts/{receipt_id}').status_code==404
+        assert member.delete(f'/api/receipts/{receipt_id}').status_code==404
+        denied=member.post('/api/receipts',data={'kind':'fuel','entry_id':fuel['id']},files={'file':('receipt.png',b'png','image/png')})
+        assert denied.status_code==404
