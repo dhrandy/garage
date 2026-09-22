@@ -22,3 +22,8 @@
 
 
 .vehicle-view-toggle{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:-10px 0 18px}.vehicle-view-toggle .check-row{margin:0!important;padding:8px 11px;background:var(--panel2);border:1px solid var(--line);border-radius:9px}.vehicle-view-toggle>.hint{font-size:13px}
+
+
+/* Keep vehicle-card structure aligned even when only some cards have costs. */
+.vehicle-card{display:flex;flex-direction:column;height:100%}.vc-head{min-height:74px}.vc-body{display:flex;flex:1;flex-direction:column}.vc-cost{min-height:68px}.vc-cost-empty{visibility:hidden}
+.vehicle-card .vc-cost{margin-top:auto}
