@@ -32,7 +32,7 @@ def test_menu_tabs_and_responsive_layout(app_url):
             page.get_by_role('button',name='Specs',exact=True).click()
             page.get_by_role('button',name='Edit specs').click()
             fields=page.locator('#specsForm .field')
-            expect(fields).to_have_count(25)
+            expect(fields).to_have_count(27)
             boxes=[fields.nth(i).bounding_box() for i in range(fields.count())]
             assert all(boxes[i]['y'] < boxes[i+1]['y'] for i in range(len(boxes)-1))
             assert all(b['x']+b['width'] <= width for b in boxes)
