@@ -406,7 +406,7 @@ class ReminderIn(BaseModel):
     due_date: str | None = None
     repeats_yearly: bool = False
 
-SETTINGS_KEYS = ("garage_name", "hide_service_log", "hide_maintenance", "hide_costs", "hide_fuel", "hide_notes", "use_vehicle_photos", "use_kilometers")
+SETTINGS_KEYS = ("garage_name", "hide_maintenance", "hide_costs", "hide_fuel", "hide_notes", "use_vehicle_photos", "use_kilometers")
 
 def read_settings(c) -> dict[str, Any]:
     data = {r["key"]: r["value"] for r in c.execute("SELECT key,value FROM settings")}
@@ -417,7 +417,6 @@ def read_settings(c) -> dict[str, Any]:
 
 class SettingsIn(BaseModel):
     garage_name: str | None = Field(default=None, max_length=80)
-    hide_service_log: bool | None = None
     hide_maintenance: bool | None = None
     hide_costs: bool | None = None
     hide_fuel: bool | None = None
@@ -1225,7 +1224,7 @@ def v1_list_notes(vehicle_id: int, request: Request):
         user=token_user(c,token)
         get_visible_vehicle(c, vehicle_id, user)
         rows = c.execute("SELECT * FROM notes WHERE vehicle_id=? ORDER BY note_date DESC,id DESC", (vehicle_id,))
-        return [note_dict(c, r) for r in rows if r["vehicle_id"] in visible]
+        return [note_dict(c, r) for r in rows]
 
 @app.post("/api/v1/vehicles/{vehicle_id}/notes", status_code=201)
 def v1_add_note(vehicle_id: int, body: NoteV1In, request: Request):
