@@ -15,12 +15,12 @@ def test_menu_tabs_and_responsive_layout(app_url):
     with sync_playwright() as p:
         browser=p.chromium.launch()
         for width,height in ((1920,1080),(390,844)):
-            page=browser.new_page(viewport={'width':width,'height':height});errors=[];page.on('pageerror',lambda e:errors.append(str(e)));page.goto(app_url)
+            page=browser.new_page(viewport={'width':width,'height':height});errors=[];page.on('pageerror',lambda e:errors.append(str(e)));page.goto(app_url);page.wait_for_load_state('networkidle')
             if page.get_by_role('heading',name='Set up Garage').count():
                 page.locator('[name=username]').fill('admin-test');page.locator('[name=password]').fill('password-123');page.get_by_role('button',name='Create administrator').click()
             else:
                 page.locator('[name=username]').fill('admin-test');page.locator('[name=password]').fill('password-123');page.get_by_role('button',name='Sign in').click()
-            page.get_by_role('button',name='Ford Mustang').click();labels=['Maintenance','Reminders','Fuel','Mods','Costs','Notes'];assert page.locator('.tab').all_inner_texts()==labels
+            page.locator('.vehicle-card').first.click();labels=['Maintenance','Reminders','Fuel','Mods','Costs','Notes'];assert page.locator('.tab').all_inner_texts()==labels
             for label in labels: page.get_by_role('button',name=label,exact=True).click();assert page.locator('#tabBody').is_visible()
             page.get_by_role('button',name='Open menu').click();page.get_by_role('button',name='Settings',exact=True).click();assert page.get_by_text('Customize this garage').is_visible()
             page.get_by_role('button',name='Open menu').click();page.get_by_role('button',name='Users',exact=True).click();assert page.get_by_text('Manage access to the shared garage').is_visible()
