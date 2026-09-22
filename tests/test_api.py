@@ -460,3 +460,15 @@ def test_private_vehicle_receipts_are_not_exposed(tmp_path):
         assert member.delete(f'/api/receipts/{receipt_id}').status_code==404
         denied=member.post('/api/receipts',data={'kind':'fuel','entry_id':fuel['id']},files={'file':('receipt.png',b'png','image/png')})
         assert denied.status_code==404
+
+
+def test_service_install_notes_round_trip(tmp_path):
+    main.DB_PATH=tmp_path/'service-notes.db'; main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup',json={'username':'admin','password':'password-123'})
+        vehicle=admin.post('/api/vehicles',json={'year':2020,'make':'Test','model':'Car','mileage':1000}).json()
+        service=admin.post('/api/services',json={'vehicle_id':vehicle['id'],'date':'2026-09-21','mileage':1100,'type':'Oil change','cost':40,'provider':'DIY','notes':'Done','torque_specs':'29 lb-ft','fluids':'5W-30, 5 qt','gotchas':'Replace washer','youtube_url':'https://youtube.com/watch?v=test'}).json()
+        assert service['torque_specs']=='29 lb-ft'
+        assert service['fluids']=='5W-30, 5 qt'
+        service=admin.put(f"/api/services/{service['id']}",json={**service,'gotchas':''}).json()
+        assert service['gotchas']=='' and service['youtube_url'].startswith('https://youtube.com/')
