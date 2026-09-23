@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import sqlite3
 import threading
@@ -318,6 +319,7 @@ def init_db():
             if col not in service_columns: c.execute(f"ALTER TABLE services ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
         if "photo_receipt_id" not in {r["name"] for r in c.execute("PRAGMA table_info(vehicles)")}:
             c.execute("ALTER TABLE vehicles ADD COLUMN photo_receipt_id INTEGER REFERENCES receipts(id)")
+        migrate_header_fields(c)
         c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", ("garage_name", "Your Garage"))
         for key in SETTINGS_KEYS[1:]:
             c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (key, "0"))
@@ -422,11 +424,13 @@ class VehicleIn(BaseModel):
     icon: str = Field(default="🚗", max_length=8)
     owner_id: int | None = None
     private: bool = False
-    fuel_type: str = Field(default="", max_length=80)
-    tire_size: str = Field(default="", max_length=80)
-    oil_spec: str = Field(default="", max_length=120)
+    # Legacy header fields. Specs are the source of truth: when sent, these write into the
+    # vehicle's specs; when omitted (None), the stored specs are left unchanged.
+    fuel_type: str | None = Field(default=None, max_length=80)
+    tire_size: str | None = Field(default=None, max_length=80)
+    oil_spec: str | None = Field(default=None, max_length=160)
 
-SPEC_FIELDS = ("engine","displacement","transmission","drivetrain","body_style","exterior_color","vin","horsepower","torque","curb_weight","wheelbase","dimensions","fuel_capacity","towing_capacity","payload","mpg_city","mpg_highway","oil_type","oil_capacity","battery_group","spark_plugs","wiper_sizes","coolant_type","brake_fluid","air_filter_part_number","wheel_lug_torque","wheel_size")
+SPEC_FIELDS = ("engine","displacement","transmission","drivetrain","body_style","exterior_color","vin","horsepower","torque","curb_weight","wheelbase","dimensions","fuel_capacity","towing_capacity","payload","mpg_city","mpg_highway","oil_type","oil_capacity","battery_group","spark_plugs","wiper_sizes","coolant_type","brake_fluid","air_filter_part_number","wheel_lug_torque","wheel_size","tire_size","fuel_type")
 
 class VehicleSpecsIn(BaseModel):
     engine: str = Field(default="", max_length=160)
@@ -456,6 +460,10 @@ class VehicleSpecsIn(BaseModel):
     air_filter_part_number: str = Field(default="", max_length=120)
     wheel_lug_torque: str = Field(default="", max_length=80)
     wheel_size: str = Field(default="", max_length=80)
+    # Added after the original spec set. Omitted (None) keeps the stored value so older
+    # clients that replace specs without these keys do not wipe them.
+    tire_size: str | None = Field(default=None, max_length=80)
+    fuel_type: str | None = Field(default=None, max_length=80)
 
 class ServiceIn(BaseModel):
     vehicle_id: int
@@ -603,7 +611,7 @@ def vehicle_dict(c, row):
     return {"id":row["id"],"name":row["name"],"year":row["year"],"mileage":row["mileage"],"icon":row["icon"],
             "est_mileage":est["est_mileage"],"miles_per_day":est["miles_per_day"],"photo_receipt_id":row["photo_receipt_id"],
             "photo_url":f"/api/receipts/{row['photo_receipt_id']}" if row["photo_receipt_id"] else None,
-            "added_by":display_user(c,row["added_by"]) or "System", "owner_id":row["owner_id"], "owner":display_user(c,row["owner_id"]) or "System", "private":bool(row["private"]), "fuel_type":row["fuel_type"], "tire_size":row["tire_size"], "oil_spec":row["oil_spec"],
+            "added_by":display_user(c,row["added_by"]) or "System", "owner_id":row["owner_id"], "owner":display_user(c,row["owner_id"]) or "System", "private":bool(row["private"]), **header_specs(c,row["id"]),
             "mileage_updated_by": (lambda r: display_user(c, r["recorded_by"]) if r else "")(c.execute("SELECT recorded_by FROM mileage_updates WHERE vehicle_id=? ORDER BY id DESC LIMIT 1", (row["id"],)).fetchone()),
             "created_at":row["created_at"],"updated_at":row["updated_at"]}
 
@@ -618,8 +626,9 @@ def add_vehicle(body: VehicleIn, request: Request):
     with db() as c:
         owner_id=body.owner_id if user["is_admin"] and body.owner_id else user["id"]
         if not c.execute("SELECT 1 FROM users WHERE id=? AND active=1",(owner_id,)).fetchone(): raise HTTPException(400,"Owner not found")
-        cur=c.execute("INSERT INTO vehicles(name,year,mileage,icon,added_by,owner_id,private,fuel_type,tire_size,oil_spec,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                      (body.name.strip(),body.year.strip(),body.mileage,body.icon,user["id"],owner_id,int(body.private),body.fuel_type.strip(),body.tire_size.strip(),body.oil_spec.strip(),stamp,stamp))
+        cur=c.execute("INSERT INTO vehicles(name,year,mileage,icon,added_by,owner_id,private,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                      (body.name.strip(),body.year.strip(),body.mileage,body.icon,user["id"],owner_id,int(body.private),stamp,stamp))
+        write_header_specs(c,cur.lastrowid,body)
         row=c.execute("SELECT * FROM vehicles WHERE id=?",(cur.lastrowid,)).fetchone(); return vehicle_dict(c,row)
 
 @app.put("/api/vehicles/{item_id}")
@@ -629,8 +638,9 @@ def update_vehicle(item_id:int, body:VehicleIn, request:Request):
         old=get_visible_vehicle(c,item_id,user)
         require_vehicle_edit(old, user)
         owner_id=body.owner_id if user["is_admin"] and body.owner_id else old["owner_id"] or user["id"]
-        cur=c.execute("UPDATE vehicles SET name=?,year=?,mileage=?,icon=?,owner_id=?,private=?,fuel_type=?,tire_size=?,oil_spec=?,updated_at=? WHERE id=?",
-                      (body.name.strip(),body.year.strip(),body.mileage,body.icon,owner_id,int(body.private),body.fuel_type.strip(),body.tire_size.strip(),body.oil_spec.strip(),stamp,item_id))
+        cur=c.execute("UPDATE vehicles SET name=?,year=?,mileage=?,icon=?,owner_id=?,private=?,updated_at=? WHERE id=?",
+                      (body.name.strip(),body.year.strip(),body.mileage,body.icon,owner_id,int(body.private),stamp,item_id))
+        write_header_specs(c,item_id,body)
         if body.mileage != old["mileage"]:
             c.execute("INSERT INTO mileage_updates(vehicle_id,mileage,recorded_by,recorded_at) VALUES(?,?,?,?)",
                       (item_id,body.mileage,user["id"],stamp))
@@ -704,13 +714,81 @@ def service_dict(c,row):
 def specs_dict(row):
     return {k:(row[k] if row else "") for k in SPEC_FIELDS}
 
+def upsert_specs(c, vehicle_id: int, values: dict[str, str]):
+    """Insert or update only the given spec columns; other columns keep their stored values."""
+    fields=[k for k in SPEC_FIELDS if k in values]
+    columns=",".join(("vehicle_id",*fields,"updated_at"))
+    marks=",".join("?" for _ in range(len(fields)+2))
+    updates=",".join(f"{k}=excluded.{k}" for k in (*fields,"updated_at"))
+    c.execute(f"INSERT INTO vehicle_specs({columns}) VALUES({marks}) ON CONFLICT(vehicle_id) DO UPDATE SET {updates}", (vehicle_id,*(values[k] for k in fields),now_iso()))
+
 def save_specs(c, vehicle_id: int, body: VehicleSpecsIn):
-    values=[getattr(body,k).strip() for k in SPEC_FIELDS]
-    columns=",".join(("vehicle_id",*SPEC_FIELDS,"updated_at"))
-    marks=",".join("?" for _ in range(len(SPEC_FIELDS)+2))
-    updates=",".join(f"{k}=excluded.{k}" for k in (*SPEC_FIELDS,"updated_at"))
-    c.execute(f"INSERT INTO vehicle_specs({columns}) VALUES({marks}) ON CONFLICT(vehicle_id) DO UPDATE SET {updates}", (vehicle_id,*values,now_iso()))
+    upsert_specs(c, vehicle_id, {k:getattr(body,k).strip() for k in SPEC_FIELDS if getattr(body,k) is not None})
     return specs_dict(c.execute("SELECT * FROM vehicle_specs WHERE vehicle_id=?",(vehicle_id,)).fetchone())
+
+OIL_SPLIT = re.compile(r"^\s*(.*?)\s*,\s*(\d[\d.]*\s*(?:qt|qts|quarts?|l|liters?|litres?)\.?)\s*$", re.I)
+
+def split_oil_spec(text: str) -> tuple[str, str]:
+    """Split a header-style oil spec such as "0W-20, 5.3 qt" into (oil_type, oil_capacity)."""
+    text=(text or "").strip()
+    m=OIL_SPLIT.match(text)
+    return (m.group(1), m.group(2)) if m and m.group(1) else (text, "")
+
+def join_oil_spec(oil_type: str, oil_capacity: str) -> str:
+    return ", ".join(v for v in ((oil_type or "").strip(), (oil_capacity or "").strip()) if v)
+
+def header_specs(c, vehicle_id: int) -> dict[str, str]:
+    """Header chip values for a vehicle, derived from its specs (the single source of truth)."""
+    row=c.execute("SELECT fuel_type,tire_size,oil_type,oil_capacity FROM vehicle_specs WHERE vehicle_id=?",(vehicle_id,)).fetchone()
+    if not row: return {"fuel_type":"","tire_size":"","oil_spec":""}
+    return {"fuel_type":row["fuel_type"],"tire_size":row["tire_size"],"oil_spec":join_oil_spec(row["oil_type"],row["oil_capacity"])}
+
+def write_header_specs(c, vehicle_id: int, body: "VehicleIn"):
+    """Legacy vehicle-level fuel/tire/oil writes land in specs; omitted fields are untouched."""
+    values={}
+    if body.fuel_type is not None: values["fuel_type"]=body.fuel_type.strip()
+    if body.tire_size is not None: values["tire_size"]=body.tire_size.strip()
+    if body.oil_spec is not None: values["oil_type"],values["oil_capacity"]=split_oil_spec(body.oil_spec)
+    if values: upsert_specs(c, vehicle_id, values)
+
+def _same(a: str, b: str) -> bool:
+    norm=lambda v: re.sub(r"\s+","",(v or "")).lower()
+    return norm(a)==norm(b)
+
+def migrate_header_fields(c):
+    """Move legacy vehicles.fuel_type/tire_size/oil_spec into vehicle_specs, then blank them.
+
+    Empty spec fields are filled from the legacy value. If a spec field already holds a
+    different value, the spec value is kept and the legacy value is saved as a vehicle note
+    so nothing is lost. Safe to run repeatedly: blanked legacy columns are skipped.
+    """
+    rows=c.execute("SELECT id,owner_id,fuel_type,tire_size,oil_spec FROM vehicles WHERE fuel_type<>'' OR tire_size<>'' OR oil_spec<>''").fetchall()
+    admin=c.execute("SELECT id FROM users WHERE is_admin=1 ORDER BY id LIMIT 1").fetchone()
+    for v in rows:
+        spec=c.execute("SELECT * FROM vehicle_specs WHERE vehicle_id=?",(v["id"],)).fetchone()
+        current={k:(spec[k] if spec else "") for k in ("fuel_type","tire_size","oil_type","oil_capacity")}
+        fills, conflicts = {}, []
+        for field,label in (("fuel_type","Fuel"),("tire_size","Tires")):
+            legacy=v[field].strip()
+            if not legacy: continue
+            if not current[field]: fills[field]=legacy
+            elif not _same(current[field],legacy): conflicts.append(f"{label}: {legacy}")
+        legacy_oil=v["oil_spec"].strip()
+        if legacy_oil:
+            oil_type,oil_capacity=split_oil_spec(legacy_oil); clash=False
+            for field,value in (("oil_type",oil_type),("oil_capacity",oil_capacity)):
+                if not value: continue
+                if not current[field]: fills[field]=value
+                elif not _same(current[field],value): clash=True
+            if clash: conflicts.append(f"Oil: {legacy_oil}")
+        author=v["owner_id"] or (admin["id"] if admin else None)
+        if conflicts and author is None: continue  # nowhere to keep the conflicting value; leave legacy data in place
+        if fills: upsert_specs(c, v["id"], fills)
+        if conflicts:
+            stamp=now_iso()
+            c.execute("INSERT INTO notes(vehicle_id,note_date,body,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+                      (v["id"],stamp[:10],"Header value kept during specs migration (specs already had a different value):\n"+"\n".join(conflicts),author,stamp,stamp))
+        c.execute("UPDATE vehicles SET fuel_type='',tire_size='',oil_spec='' WHERE id=?",(v["id"],))
 
 @app.get("/api/vehicles/{vehicle_id}/specs")
 def get_specs(vehicle_id:int, request:Request):
@@ -1548,6 +1626,7 @@ def import_data(payload:dict[str,Any],request:Request):
             for row in tables[name]:
                 present=[col for col in cols if col in row];marks=','.join('?' for _ in present)
                 c.execute(f"INSERT INTO {name} ({','.join(present)}) VALUES ({marks})",tuple(row[col] for col in present))
+        migrate_header_fields(c)  # backups from before specs owned fuel/tire/oil
     for path in RECEIPTS_DIR.iterdir():
         if path.is_file(): path.unlink()
     for stored,data in staged.items(): (RECEIPTS_DIR/stored).write_bytes(data)
