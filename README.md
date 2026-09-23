@@ -27,6 +27,10 @@ Garage is a simple vehicle maintenance tracker. It is self-hosted and multi-user
          - ./data:/app/data
        environment:
          - TZ=${TZ:-UTC}
+         # Set to true once Garage is served over HTTPS (reverse proxy).
+         - GARAGE_COOKIE_SECURE=${GARAGE_COOKIE_SECURE:-false}
+         # IP of your reverse proxy, so login rate limits see real client addresses.
+         - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-127.0.0.1}
        ports:
          - 8917:8000
    ```
@@ -58,7 +62,7 @@ On phones, vehicle metadata stays in compact chips and all vehicle tabs remain v
 
 The **Specs** tab groups detailed vehicle information into compact cards for powertrain, body and dimensions, wheels and tires, fuel economy, capability, and maintenance. On wide screens the cards pack into two columns without reserving empty row space; on phones they stack into one column.
 
-The **Wheels and Tires** card shows wheel size, tire size (for example `265/60R18`), and lug torque. Wheel size and tire size are separate fields, so `18 × 7.5 in` and `265/60R18` are stored independently.
+The **Wheels and Tires** card shows wheel size, tire size (for example `225/75R16`), and lug torque. Wheel size and tire size are separate fields, so `16 × 7 in` and `225/75R16` are stored independently.
 
 Specs are the single source for the **Fuel**, **Tires**, and **Oil** chips under the vehicle name: Fuel comes from the fuel type spec, Tires from tire size, and Oil joins oil type and oil capacity (for example `0W-20, 4.4 qt`). Edit them with **Edit specs**; the vehicle's **Edit** form no longer has its own copies.
 
@@ -119,7 +123,7 @@ A plain `http(s)://` URL receives a JSON webhook POST instead (`{"title": ..., "
 
 ## REST API tokens
 
-Scripts and integrations can use token-authenticated REST endpoints under `/api/v1`. Every signed-in user can create and revoke their own named tokens in **Settings → API tokens**. Members see only their own tokens; administrators retain garage-wide token management. The full token is shown once at creation; Garage stores only its SHA-256 hash. Revoking a token disables it immediately. Interactive OpenAPI docs are at `/api/docs` on your server.
+Scripts and integrations can use token-authenticated REST endpoints under `/api/v1`. Every signed-in user can create and revoke their own named tokens in **Settings → API tokens**. Members see only their own tokens; administrators retain garage-wide token management. The full token is shown once at creation; Garage stores only its SHA-256 hash. Revoking a token disables it immediately. Interactive OpenAPI docs are at `/api/docs` and the schema at `/api/openapi.json`; both require a signed-in session or an `Authorization: Bearer` API token.
 
 **Keep tokens private.** A token gives full API access to the data allowed by its creator's account. Do not paste a token into sites or apps you do not trust.
 
@@ -140,7 +144,7 @@ Endpoints (all relative to `http://your-server:8917`):
 - `GET /api/v1/vehicles/{id}/fuel` — fill-up log with per-fill `mpg`
 - `GET /api/v1/vehicles/{id}/notes` — dated freeform notes
 - `GET /api/v1/vehicles/{id}/mods` — modification list
-- `PUT /api/v1/vehicles/{id}/specs` — create or replace detailed specs (engine, transmission, drivetrain, dimensions, capacities, `wheel_size`, `tire_size`, `fuel_type`, and related fields). `wheel_size` and `tire_size` are separate, so values such as `17 × 7 in` and `205/45R17` are stored independently. `tire_size` and `fuel_type` are kept as-is when left out of the request; send an empty string to clear them. Vehicle listings still return `fuel_type`, `tire_size`, and `oil_spec`, read from specs.
+- `PUT /api/v1/vehicles/{id}/specs` — create or replace detailed specs (engine, transmission, drivetrain, dimensions, capacities, `wheel_size`, `tire_size`, `fuel_type`, and related fields). `wheel_size` and `tire_size` are separate, so values such as `17 × 7 in` and `195/65R15` are stored independently. `tire_size` and `fuel_type` are kept as-is when left out of the request; send an empty string to clear them. Vehicle listings still return `fuel_type`, `tire_size`, and `oil_spec`, read from specs.
 - `PUT /api/v1/vehicles/{id}/mileage` — update the odometer directly (JSON: `mileage`, optional `date`), same as the app's Update mileage button
 - `POST /api/v1/vehicles/{id}/services` — log a service entry (JSON; `date` is optional, and an undated service ignores `reminder_id`)
 - `POST /api/v1/vehicles/{id}/fuel` — log a fill-up (multipart form, optional receipt `file`)
@@ -184,13 +188,13 @@ A token is a password: do not paste it in public chats or repositories, prefer H
 
 Garage stores all app data in `/app/data` inside the container: the SQLite database `garage.db` plus uploaded receipt and vehicle photos under `receipts/`. With the included Compose file the host copy is the `./data` folder beside `docker-compose.yml`; with `docker run -v` it is whatever host folder you mount at `/app/data`.
 
-For a consistent backup, stop the container, copy `garage.db` and the `receipts` folder beside it, then start it again. Restore by stopping Garage and replacing both with the backup. JSON export and import in the app are useful for moving garage records, but they do not include user accounts, login sessions, or photos.
+For a consistent backup, stop the container, copy `garage.db` and the `receipts` folder beside it, then start it again. Restore by stopping Garage and replacing both with the backup. JSON export and import in the app are useful for moving garage records. Exports include users (with password hashes), API tokens (hashes only), records, and photos, so store export files somewhere private. Importing replaces everything and signs everyone out. Backups that point receipt files outside the receipts folder are rejected.
 
 ## Reverse proxy
 
 Garage works behind any HTTPS reverse proxy. The proxy must forward the original `Host`, `X-Forwarded-For`, and `X-Forwarded-Proto` headers. Set `GARAGE_COOKIE_SECURE=true` so session cookies are only sent over HTTPS.
 
-Uvicorn honors forwarded headers only from trusted proxy addresses, so set `FORWARDED_ALLOW_IPS` to the proxy's IP address (or a narrow trusted CIDR). Do not use `FORWARDED_ALLOW_IPS=*` when Garage's port is reachable by untrusted clients. Example environment:
+Uvicorn honors forwarded headers only from trusted proxy addresses, so set `FORWARDED_ALLOW_IPS` to the proxy's IP address (or a narrow trusted CIDR). Do not use `FORWARDED_ALLOW_IPS=*` when Garage's port is reachable by untrusted clients. If it is left at the default behind a proxy, every visitor looks like the proxy, so five wrong passwords from anyone lock out sign-in for everyone for 15 minutes. The included Compose file has placeholders for both settings. Example environment:
 
 ```yaml
 environment:
@@ -246,7 +250,7 @@ docker run -d --name garage -p 8917:8000 -v ./data:/app/data garage:local
 
 ## Security notes
 
-Passwords use PBKDF2-HMAC-SHA256 with a unique random salt and 260,000 iterations. Login state uses random, server-stored session tokens in an HTTP-only, SameSite cookie, so there is no signing secret to configure; `GARAGE_SECRET`, accepted by older deployment examples, is not read by the app. Set `GARAGE_COOKIE_SECURE=true` when Garage is served through HTTPS. The setup route closes automatically after the first account is created. API tokens are stored as SHA-256 hashes. Notification URLs contain service credentials and are only visible to administrators.
+Passwords use PBKDF2-HMAC-SHA256 with a unique random salt and 260,000 iterations. Login state uses random, server-stored session tokens in an HTTP-only, SameSite cookie, so there is no signing secret to configure; `GARAGE_SECRET`, accepted by older deployment examples, is not read by the app. Set `GARAGE_COOKIE_SECURE=true` when Garage is served through HTTPS. The setup route closes automatically after the first account is created, so finish setup before exposing the port. Changing a user's password signs that user out of their other sessions. Dates must be `YYYY-MM-DD`, and video links must start with `http://` or `https://`. Uploads are capped at 10 MB and read in chunks. API docs are not public. API tokens are stored as SHA-256 hashes. Notification URLs contain service credentials and are only visible to administrators.
 
 ## License
 
