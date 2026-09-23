@@ -52,6 +52,10 @@ Administrators can open **Settings** to rename the garage. The name is stored in
 
 Settings also has **Vehicle page sections** checkboxes to hide the Service log, Maintenance, Fuel, Costs, and Notes sections. Hidden sections disappear from every vehicle page for all users. The choices are stored in SQLite and apply to everyone, including non-administrators.
 
+## Vehicle specs
+
+The **Specs** tab groups detailed vehicle information into compact cards for powertrain, body and dimensions, wheels and tires, fuel economy, capability, and maintenance. On wide screens the cards pack into two columns without reserving empty row space; on phones they stack into one column.
+
 ## Maintenance reminders and service logging
 
 The **Maintenance** tab on each vehicle tracks recurring items by miles, months, or both. A service date is optional; undated entries display **Date not set**. When a date is supplied, you can pick **Marks maintenance done** to link the service to one of those items; the item's last-done date and mileage reset to the service entry, so nothing has to be recorded twice. Undated services do not reset or link a maintenance reminder. The same rules apply to `date` and `reminder_id` on the service-create API endpoints.
