@@ -166,8 +166,65 @@ def test_api_tokens_and_v1_endpoints(tmp_path):
         assert admin.get('/api/v1/vehicles', headers=auth).status_code == 401
     with TestClient(main.app) as member:
         member.post('/api/login', json={'username':'member-test','password':'password-456'})
-        assert member.get('/api/tokens').status_code == 403
-        assert member.post('/api/tokens', json={'name':'x'}).status_code == 403
+        assert member.get('/api/tokens').json() == []
+        assert member.post('/api/tokens', json={'name':'x'}).status_code == 201
+
+
+def test_member_tokens_are_self_managed_and_vehicle_scoped(tmp_path):
+    main.DB_PATH = tmp_path / 'member-tokens.db'
+    main.RECEIPTS_DIR = tmp_path / 'receipts'
+    main.RECEIPTS_DIR.mkdir(exist_ok=True)
+    main._login_failures.clear(); main._api_calls.clear(); main._api_failures.clear()
+    main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup', json={'username':'admin-test','password':'password-123'})
+        admin_token = admin.post('/api/tokens', json={'name':'admin script'}).json()
+        member_user = admin.post('/api/users', json={'username':'member-test','password':'password-456','is_admin':False}).json()
+        other_vehicle_id = admin.get('/api/vehicles').json()[0]['id']
+    with TestClient(main.app) as member:
+        assert member.post('/api/login', json={'username':'member-test','password':'password-456'}).status_code == 200
+        own_vehicle = member.post('/api/vehicles', json={'name':'Member car','year':'2020','mileage':1000}).json()
+        created = member.post('/api/tokens', json={'name':'member script'})
+        assert created.status_code == 201
+        member_token = created.json()
+        listed = member.get('/api/tokens').json()
+        assert [item['id'] for item in listed] == [member_token['id']]
+        assert admin_token['id'] not in {item['id'] for item in listed}
+        assert member.delete(f"/api/tokens/{admin_token['id']}").status_code == 404
+        auth = {'Authorization': f"Bearer {member_token['token']}"}
+        vehicles = member.get('/api/v1/vehicles', headers=auth).json()
+        assert [vehicle['id'] for vehicle in vehicles] == [own_vehicle['id']]
+        service = member.post(f"/api/v1/vehicles/{own_vehicle['id']}/services", headers=auth,
+                              json={'date':'2026-09-22','mileage':1100,'type':'Oil change','cost':40})
+        assert service.status_code == 201 and service.json()['logged_by'] == 'member-test'
+        assert member.get(f"/api/v1/vehicles/{own_vehicle['id']}/services", headers=auth).status_code == 200
+        assert member.get(f"/api/v1/vehicles/{other_vehicle_id}/services", headers=auth).status_code == 404
+        assert member.post(f"/api/v1/vehicles/{other_vehicle_id}/services", headers=auth,
+                           json={'date':'2026-09-22','mileage':1100,'type':'Nope','cost':0}).status_code == 404
+        foreign_routes = [
+            ('get', f'/api/v1/vehicles/{other_vehicle_id}/specs', None),
+            ('put', f'/api/v1/vehicles/{other_vehicle_id}/specs', {}),
+            ('get', f'/api/v1/vehicles/{other_vehicle_id}/maintenance', None),
+            ('get', f'/api/v1/vehicles/{other_vehicle_id}/mods', None),
+            ('post', f'/api/v1/vehicles/{other_vehicle_id}/mods', {'name':'Nope'}),
+            ('get', f'/api/v1/vehicles/{other_vehicle_id}/fuel', None),
+            ('put', f'/api/v1/vehicles/{other_vehicle_id}/mileage', {'mileage':1200}),
+            ('get', f'/api/v1/vehicles/{other_vehicle_id}/notes', None),
+            ('post', f'/api/v1/vehicles/{other_vehicle_id}/notes', {'date':'2026-09-22','body':'Nope'}),
+        ]
+        for method, path, payload in foreign_routes:
+            response = getattr(member, method)(path, headers=auth, **({'json':payload} if payload is not None else {}))
+            assert response.status_code == 404, (method, path, response.text)
+        assert member.post(f'/api/v1/vehicles/{other_vehicle_id}/fuel', headers=auth,
+                           data={'date':'2026-09-22','odometer':'1200','gallons':'10','cost':'30'}).status_code == 404
+    with TestClient(main.app) as admin_again:
+        admin_again.post('/api/login', json={'username':'admin-test','password':'password-123'})
+        ids = {item['id'] for item in admin_again.get('/api/tokens').json()}
+        assert ids == {admin_token['id'], member_token['id']}
+        assert admin_again.delete(f"/api/tokens/{member_token['id']}").status_code == 200
+    with TestClient(main.app) as member_again:
+        member_again.post('/api/login', json={'username':'member-test','password':'password-456'})
+        assert member_again.get('/api/tokens').json() == []
 
 
 def test_api_invalid_token_rate_limit(tmp_path):
