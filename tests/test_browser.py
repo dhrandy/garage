@@ -46,7 +46,7 @@ def test_menu_tabs_and_responsive_layout(app_url):
             page.evaluate("""async () => {
                 const vehicles=await fetch('/api/vehicles').then(r=>r.json());
                 const vehicle=vehicles[0];
-                const response=await fetch(`/api/vehicles/${vehicle.id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({...vehicle,name:'Hyundai Tucson',year:'2023',mileage:46762,fuel_type:'Regular gasoline',tire_size:'235/65R17',oil_spec:'0W-20, 5.3 qt'})});
+                const response=await fetch(`/api/vehicles/${vehicle.id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({...vehicle,name:'Test Coupe',year:'1999',mileage:50000,fuel_type:'Unleaded',tire_size:'215/60R16',oil_spec:'5W-30, 5 qt'})});
                 if (!response.ok) throw new Error(`vehicle setup failed: ${response.status}`);
             }""")
             page.reload()
@@ -97,35 +97,35 @@ def test_menu_tabs_and_responsive_layout(app_url):
             assert all(boxes[i]["y"] < boxes[i + 1]["y"] for i in range(len(boxes) - 1))
             assert all(b["x"] + b["width"] <= width for b in boxes)
             realistic_specs = {
-                "engine": "5.0L Ti-VCT V8",
-                "displacement": "5.0L / 302 cu in",
-                "transmission": "10-speed SelectShift automatic",
-                "drivetrain": "4x2; electronic-locking rear differential",
-                "body_style": "SuperCrew 4-door pickup, Lariat",
-                "exterior_color": "Antimatter Blue Metallic",
-                "vin": "1FTFW1E50MFA12345",
-                "horsepower": "400 hp @ 6,000 rpm",
-                "torque": "410 lb-ft @ 4,250 rpm",
-                "curb_weight": "4,705 lb curb weight",
-                "wheelbase": "145.4 in",
-                "dimensions": "L 231.7 in, W 79.9 in excl mirrors, H 75.6 in, ground clearance 8.5 in",
-                "fuel_type": "Regular gasoline",
-                "fuel_capacity": "26 gal",
-                "towing_capacity": "13,000 lb with Max Trailer Tow Package",
-                "payload": "2,445 lb maximum payload",
-                "mpg_city": "17 mpg EPA city",
-                "mpg_highway": "23 mpg EPA highway",
+                "engine": "3.0L inline-6 (example)",
+                "displacement": "3.0L / 183 cu in",
+                "transmission": "6-speed automatic",
+                "drivetrain": "Rear-wheel drive, open differential",
+                "body_style": "2-door coupe, base trim",
+                "exterior_color": "Example Silver",
+                "vin": "TEST0VIN000000000",
+                "horsepower": "250 hp @ 6,000 rpm",
+                "torque": "220 lb-ft @ 4,000 rpm",
+                "curb_weight": "3,300 lb curb weight",
+                "wheelbase": "107.0 in",
+                "dimensions": "L 180.0 in, W 70.0 in excl mirrors, H 54.0 in, ground clearance 5.0 in",
+                "fuel_type": "Unleaded",
+                "fuel_capacity": "16 gal",
+                "towing_capacity": "1,000 lb with hitch kit",
+                "payload": "900 lb maximum payload",
+                "mpg_city": "20 mpg EPA city",
+                "mpg_highway": "28 mpg EPA highway",
                 "oil_type": "SAE 5W-30 full synthetic",
-                "oil_capacity": "7.7 qt with filter",
-                "battery_group": "H7 AGM / 94R",
-                "spark_plugs": "Motorcraft SP-594 / 0.049 in gap",
-                "wiper_sizes": "22 in driver / 22 in passenger",
-                "coolant_type": "Motorcraft Yellow prediluted coolant",
-                "brake_fluid": "DOT 4 LV high performance",
-                "air_filter_part_number": "Motorcraft FA-1883",
-                "wheel_lug_torque": "150 lb-ft",
-                "wheel_size": "18 in machined aluminum",
-                "tire_size": "265/60R18 all-terrain",
+                "oil_capacity": "6 qt with filter",
+                "battery_group": "Group 48",
+                "spark_plugs": "Example plug EX-100 / 0.044 in gap",
+                "wiper_sizes": "20 in driver / 18 in passenger",
+                "coolant_type": "Universal prediluted coolant",
+                "brake_fluid": "DOT 3",
+                "air_filter_part_number": "EX-AF-200",
+                "wheel_lug_torque": "90 lb-ft",
+                "wheel_size": "16 in alloy",
+                "tire_size": "215/60R16 touring",
             }
             assert len(realistic_specs) == 29
             for name, value in realistic_specs.items():
@@ -148,7 +148,7 @@ def test_menu_tabs_and_responsive_layout(app_url):
                 ["Wheel size", "Tire size", "Lug torque"]
             )
             expect(wheels.locator("dd")).to_have_text(
-                ["18 in machined aluminum", "265/60R18 all-terrain", "150 lb-ft"]
+                ["16 in alloy", "215/60R16 touring", "90 lb-ft"]
             )
             expect(
                 grid.locator(".spec-section", has_text="Fuel and Economy")
@@ -158,9 +158,9 @@ def test_menu_tabs_and_responsive_layout(app_url):
             # header chips read from the saved specs without a reload
             expect(page.locator(".vehicle-specs dd")).to_have_text(
                 [
-                    "Regular gasoline",
-                    "265/60R18 all-terrain",
-                    "SAE 5W-30 full synthetic, 7.7 qt with filter",
+                    "Unleaded",
+                    "215/60R16 touring",
+                    "SAE 5W-30 full synthetic, 6 qt with filter",
                 ]
             )
             if os.environ.get("GARAGE_SCREENSHOT_DIR"):
@@ -267,5 +267,63 @@ def test_menu_tabs_and_responsive_layout(app_url):
             expect(page.locator(".vehicle-specs")).to_have_count(0)
             expect(page.locator(".tab")).to_have_count(0)
             assert "Ford Mustang" not in page.locator("body").inner_text()
+            page.close()
+        browser.close()
+
+
+def test_vehicle_card_cost_rows_have_even_spacing(app_url):
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        for width, height in ((1920, 1080), (390, 844)):
+            page = browser.new_page(viewport={"width": width, "height": height})
+            page.goto(app_url)
+            page.wait_for_load_state("networkidle")
+            if page.get_by_role("heading", name="Set up Garage").count():
+                page.locator("[name=username]").fill("admin-test")
+                page.locator("[name=password]").fill("password-123")
+                page.get_by_role("button", name="Create administrator").click()
+            else:
+                page.locator("[name=username]").fill("admin-test")
+                page.locator("[name=password]").fill("password-123")
+                page.get_by_role("button", name="Sign in").click()
+            expect(page.locator(".vehicle-card").first).to_be_visible()
+            if width == 1920:
+                page.evaluate("""async () => {
+                    const post=(url,body)=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>{if(!r.ok)throw new Error(url+' '+r.status);return r.json()});
+                    const a=await post('/api/vehicles',{name:'Cost test mods only'});
+                    await post('/api/mods',{vehicle_id:a.id,name:'Part A',price:211.84});
+                    const b=await post('/api/vehicles',{name:'Cost test service and mods'});
+                    await post('/api/services',{vehicle_id:b.id,type:'Oil change',cost:153.88});
+                    await post('/api/mods',{vehicle_id:b.id,name:'Part B',price:43.97});
+                    const c=await post('/api/vehicles',{name:'Cost test all three'});
+                    await post('/api/services',{vehicle_id:c.id,type:'Wipers',cost:18.80});
+                    await post('/api/fuel',{vehicle_id:c.id,date:'2026-01-01',odometer:1000,gallons:10,cost:44.56});
+                    await post('/api/mods',{vehicle_id:c.id,name:'Part C',price:835.54});
+                }""")
+                page.reload()
+                page.wait_for_load_state("networkidle")
+            gaps, heights = set(), set()
+            for name in (
+                "Cost test mods only",
+                "Cost test service and mods",
+                "Cost test all three",
+            ):
+                cost = page.locator(".vehicle-card", has_text=name).locator(".vc-cost")
+                labels = cost.locator(".vc-cost-row > span:first-child")
+                expect(labels).to_have_text(["Total", "Service", "Fuel", "Mods"])
+                tops = [
+                    labels.nth(i).bounding_box()["y"] for i in range(labels.count())
+                ]
+                gaps.update(round(tops[i + 1] - tops[i]) for i in range(len(tops) - 1))
+                heights.add(round(cost.bounding_box()["height"]))
+            assert len(gaps) == 1, f"uneven cost row spacing: {gaps}"
+            assert len(heights) == 1, f"cost blocks differ in height: {heights}"
+            if os.environ.get("GARAGE_SCREENSHOT_DIR"):
+                page.screenshot(
+                    path=os.path.join(
+                        os.environ["GARAGE_SCREENSHOT_DIR"], f"cost-rows-{width}.png"
+                    ),
+                    full_page=True,
+                )
             page.close()
         browser.close()
