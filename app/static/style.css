@@ -189,11 +189,6 @@ h2 {
 .vc-miles {
   font-size: 20px;
 }
-.vc-cost {
-  color: var(--muted);
-  font-size: 13px;
-  margin-top: 9px;
-}
 .status-line {
   margin-top: 6px;
 }
@@ -840,20 +835,6 @@ footer {
 .vc-mpg {
   margin-top: 2px;
 }
-.vc-cost {
-  display: grid;
-  gap: 4px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line);
-}
-.vc-cost > div {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-}
-.vc-cost > div:first-child {
-  color: var(--text);
-}
 @media (max-width: 650px) {
   .icon-btn {
     font-size: 21px;
@@ -865,29 +846,6 @@ footer {
   .cost-summary {
     gap: 20px;
   }
-}
-
-/* Keep card cost details compact and visually tied to the status above. */
-.vc-cost {
-  width: max-content;
-  min-width: 150px;
-  max-width: 100%;
-  grid-template-columns: minmax(56px, auto) auto;
-  column-gap: 18px;
-  row-gap: 2px;
-  margin-top: 7px;
-  padding-top: 7px;
-}
-.vc-cost > div {
-  display: contents;
-}
-.vc-cost > div > span:last-child,
-.vc-cost > div > strong {
-  justify-self: end;
-}
-.vc-cost > div:first-child > span,
-.vc-cost > div:first-child > strong {
-  color: var(--text);
 }
 
 .vehicle-view-toggle {
@@ -921,15 +879,6 @@ footer {
   display: flex;
   flex: 1;
   flex-direction: column;
-}
-.vc-cost {
-  min-height: 68px;
-}
-.vc-cost-empty {
-  visibility: hidden;
-}
-.vehicle-card .vc-cost {
-  margin-top: auto;
 }
 
 .vehicle-specs {
@@ -1191,4 +1140,41 @@ footer {
 }
 .warning b {
   color: #ffe4a3;
+}
+
+/* Vehicle card cost block: every card shows the same four rows (Total, Service, Fuel,
+   Mods) at a fixed row height, so spacing never shifts when a category is $0. */
+.vehicle-card .vc-cost {
+  display: grid;
+  grid-template-columns: minmax(64px, auto) auto;
+  grid-auto-rows: 20px;
+  align-content: start;
+  column-gap: 18px;
+  row-gap: 2px;
+  width: max-content;
+  min-width: 160px;
+  max-width: 100%;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 20px;
+}
+.vc-cost-row {
+  display: contents;
+}
+.vc-cost-row > :last-child {
+  justify-self: end;
+  font-variant-numeric: tabular-nums;
+}
+.vc-cost-total > span,
+.vc-cost-total > strong {
+  color: var(--text);
+}
+.vc-cost-zero > span {
+  opacity: 0.55;
+}
+.vehicle-card .status-line {
+  margin-bottom: 10px;
 }
