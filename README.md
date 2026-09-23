@@ -113,7 +113,9 @@ A plain `http(s)://` URL receives a JSON webhook POST instead (`{"title": ..., "
 
 ## REST API tokens
 
-Scripts and integrations can use token-authenticated REST endpoints under `/api/v1`. Administrators create named tokens in **Settings → API tokens**. The full token is shown once at creation; Garage stores only its SHA-256 hash. Revoking a token disables it immediately. Interactive OpenAPI docs are at `/api/docs` on your server.
+Scripts and integrations can use token-authenticated REST endpoints under `/api/v1`. Every signed-in user can create and revoke their own named tokens in **Settings → API tokens**. Members see only their own tokens; administrators retain garage-wide token management. The full token is shown once at creation; Garage stores only its SHA-256 hash. Revoking a token disables it immediately. Interactive OpenAPI docs are at `/api/docs` on your server.
+
+**Keep tokens private.** A token gives full API access to the data allowed by its creator's account. Do not paste a token into sites or apps you do not trust.
 
 Token requests act as the user who created the token, so the visibility and ownership rules apply to scripts too: a token sees exactly the vehicles its creator can see, and write endpoints reject vehicles the creator may not edit.
 
