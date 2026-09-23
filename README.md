@@ -72,7 +72,7 @@ Each vehicle has a **Fuel** tab for fill-ups: date, odometer, gallons, and total
 
 ## Notes
 
-Each vehicle has a **Notes** tab for freeform dated notes: things like tire pressures, part numbers, or reminders to yourself. Notes are a simple dated list that any user can add to, edit, and delete, and each note shows who wrote it. The tab can be hidden in Settings, and notes are available over the REST API (`GET`/`POST /api/v1/vehicles/{id}/notes`) so scripts and AI assistants can read and write them.
+Each vehicle has a **Notes** tab for freeform dated notes: things like tire pressures, part numbers, or reminders to yourself. Notes are a simple dated list that the vehicle's owner and administrators can add to, edit, and delete, and each note shows who wrote it. The tab can be hidden in Settings, and notes are available over the REST API (`GET`/`POST /api/v1/vehicles/{id}/notes`) so scripts and AI assistants can read and write them.
 
 ## Receipt photos
 
@@ -80,7 +80,9 @@ Service entries and fill-ups can carry receipt photos. Use the receipt field whe
 
 ## Users
 
-Administrators can open **Users** from the top bar to create users, change usernames, reset passwords, grant or remove administrator access, and deactivate accounts. All active users see the same garage. Every vehicle and service entry records the user who added or logged it. Non-administrators can manage vehicles, services, mileage, and reminders, but cannot manage users.
+Administrators can open **Users** from the top bar to create users, change usernames, reset passwords, grant or remove administrator access, and deactivate accounts. All active users see the same garage. Every vehicle and service entry records the user who added or logged it. Non-administrators cannot manage users.
+
+Every vehicle has an owner, chosen when the vehicle is added; administrators can reassign ownership from the vehicle's **Edit** form. Administrators can edit every vehicle and everything on it. A non-administrator can edit only their own vehicles — specs, services, fill-ups, maintenance items, modifications, notes, receipts, mileage, and photo — and sees everyone else's vehicles read-only: the data stays visible, but the edit buttons are hidden and the API rejects changes with `403`.
 
 ## Port
 
@@ -108,6 +110,8 @@ A plain `http(s)://` URL receives a JSON webhook POST instead (`{"title": ..., "
 ## REST API tokens
 
 Scripts and integrations can use token-authenticated REST endpoints under `/api/v1`. Administrators create named tokens in **Settings → API tokens**. The full token is shown once at creation; Garage stores only its SHA-256 hash. Revoking a token disables it immediately. Interactive OpenAPI docs are at `/api/docs` on your server.
+
+Token requests act as the user who created the token, so the ownership rule applies to scripts too: write endpoints return `403` for vehicles the token's creator does not own unless that user is an administrator.
 
 Send the token as a bearer header:
 
@@ -250,3 +254,5 @@ The browser uses a JSON REST API under `/api`. Authentication is cookie-based.
 - `GET/POST /api/tokens`, `DELETE /api/tokens/{id}` (administrator only)
 - `GET/PUT /api/notifications`, `POST /api/notifications/test` (administrator only)
 - `/api/v1/...` token endpoints (see **REST API tokens**)
+
+Writes on a vehicle and its entries (`PUT/DELETE /api/vehicles/{id}`, `POST /api/vehicles/{id}/photo`, and the `POST`/`PUT`/`DELETE` routes for specs, services, fuel, receipts, reminders, notes, and mods) require the vehicle's owner or an administrator; reads stay available to any signed-in user who can see the vehicle.
