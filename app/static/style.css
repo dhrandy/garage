@@ -60,3 +60,6 @@
 .vehicle-specs{display:flex;align-items:flex-start;gap:8px}
 .vehicle-specs>div{width:max-content;max-width:100%}
 }
+
+.warning{margin:12px 0;padding:12px 14px;border:1px solid #7c5b1d;border-radius:10px;background:#2a2112;color:#f5d78e;line-height:1.45}
+.warning b{color:#ffe4a3}
