@@ -1201,6 +1201,16 @@ footer {
     width: 100%;
     height: 160px;
     overflow: hidden;
+    /* As a grid item of .vc-icon (place-items: center), the img's height: 100%
+       resolves as indefinite, so it kept its natural height and overflowed the
+       160px banner, showing the top of the photo. Pin it to the banner box so
+       object-fit crops centered. */
+    position: relative;
+  }
+  .detail-head .vc-icon:has(.vc-photo) .vc-photo {
+    position: absolute;
+    inset: 0;
+    object-position: center;
   }
   .detail-head .vc-icon:has(.vc-photo) + div {
     grid-column: 1 / -1;
