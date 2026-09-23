@@ -26,9 +26,27 @@ def test_menu_tabs_and_responsive_layout(app_url):
             else:
                 page.locator('[name=username]').fill('admin-test');page.locator('[name=password]').fill('password-123');page.get_by_role('button',name='Sign in').click()
             expect(page.locator('.vehicle-card').first).to_be_visible()
+            page.evaluate("""async () => {
+                const vehicles=await fetch('/api/vehicles').then(r=>r.json());
+                const vehicle=vehicles[0];
+                const response=await fetch(`/api/vehicles/${vehicle.id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({...vehicle,name:'Hyundai Tucson',year:'2023',mileage:46762,fuel_type:'Regular gasoline',tire_size:'235/65R17',oil_spec:'0W-20, 5.3 qt'})});
+                if (!response.ok) throw new Error(`vehicle setup failed: ${response.status}`);
+            }""")
+            page.reload();page.wait_for_load_state('networkidle')
             page.locator('.vehicle-card').first.click()
             labels=['Specs','Maintenance','Reminders','Fuel','Mods','Costs','Notes']
-            expect(page.locator('.tab')).to_have_count(7)
+            tabs=page.locator('.tab')
+            expect(tabs).to_have_count(7)
+            tabs_box=page.locator('.tabs').bounding_box()
+            tab_boxes=[tabs.nth(i).bounding_box() for i in range(tabs.count())]
+            assert tabs_box is not None and all(box is not None for box in tab_boxes)
+            assert all(box['x'] >= tabs_box['x']-1 and box['x']+box['width'] <= tabs_box['x']+tabs_box['width']+1 for box in tab_boxes)
+            if width==390:
+                assert len({round(box['y']) for box in tab_boxes})==2
+                chips=page.locator('.vehicle-specs>div')
+                expect(chips).to_have_count(3)
+                chip_boxes=[chips.nth(i).bounding_box() for i in range(chips.count())]
+                assert all(box is not None and box['width'] < tabs_box['width']*.75 for box in chip_boxes)
             page.get_by_role('button',name='Maintenance',exact=True).click()
             page.get_by_role('button',name='+ Log service').click()
             service_date=page.locator('#serviceForm [name=date]')
