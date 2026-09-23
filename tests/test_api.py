@@ -280,7 +280,7 @@ def test_daily_check_notifies_only_newly_due(tmp_path, monkeypatch):
     with TestClient(main.app) as admin:
         admin.post('/api/setup', json={'username':'admin-test','password':'password-123'})
         admin.put('/api/notifications', json={'apprise_urls':'json://example.invalid/hook'})
-        admin.post('/api/services', json={'vehicle_id':1,'date':'2026-09-01','mileage':20000,'type':'Tires'})
+        admin.post('/api/services', json={'vehicle_id':1,'date':'2026-09-20','mileage':20000,'type':'Tires'})
         admin.post('/api/reminders', json={'vehicle_id':1,'name':'Oil change','miles_interval':5000,'months_interval':None,'last_date':'2026-09-01','last_mileage':20000})
         assert main.run_notification_check() is False  # 0% used: nothing due
         admin.post('/api/fuel', json={'vehicle_id':1,'date':'2026-09-20','odometer':24500,'gallons':10,'cost':35})
