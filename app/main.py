@@ -27,9 +27,10 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 BASE = Path(__file__).resolve().parent
 DATA_DIR = Path(os.getenv("GARAGE_DATA_DIR", "/app/data"))
@@ -63,10 +64,73 @@ _api_lock = threading.Lock()
 app = FastAPI(
     title="Garage",
     version="2.0.0",
-    docs_url="/api/docs",
-    openapi_url="/api/openapi.json",
+    docs_url=None,
+    openapi_url=None,
 )
 bearer_scheme = HTTPBearer(auto_error=False)
+STORED_NAME_RE = re.compile(r"^[0-9a-f]{32}\.(?:jpg|png|webp|gif|heic)$")
+UPLOAD_CHUNK = 1024 * 1024
+
+
+def iso_date(value: str | None) -> date | None:
+    """Parse a stored YYYY-MM-DD date; return None for blank or malformed values."""
+    if not value:
+        return None
+    try:
+        return datetime.strptime(str(value), "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def check_date(value: str | None, required: bool = False) -> str | None:
+    """Validate an incoming YYYY-MM-DD date. Blank optional dates stay blank."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        if required:
+            raise ValueError("Date is required (YYYY-MM-DD)")
+        return value
+    value = value.strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) or iso_date(value) is None:
+        raise ValueError("Dates must be YYYY-MM-DD")
+    return value
+
+
+def check_url(value: str) -> str:
+    value = (value or "").strip()
+    if value and not re.match(r"^https?://", value, re.I):
+        raise ValueError("Video links must start with http:// or https://")
+    return value
+
+
+def receipt_path(stored_name: str) -> Path:
+    """Resolve a stored receipt file and refuse anything outside the receipts folder."""
+    if not isinstance(stored_name, str) or not STORED_NAME_RE.fullmatch(stored_name):
+        raise HTTPException(404, "Receipt file is missing")
+    path = (RECEIPTS_DIR / stored_name).resolve()
+    if path.parent != RECEIPTS_DIR.resolve():
+        raise HTTPException(404, "Receipt file is missing")
+    return path
+
+
+def unlink_receipt(stored_name: str) -> None:
+    """Delete a stored receipt file; names that fail validation are never touched."""
+    if isinstance(stored_name, str) and STORED_NAME_RE.fullmatch(stored_name):
+        (RECEIPTS_DIR / stored_name).unlink(missing_ok=True)
+
+
+async def read_upload(file: UploadFile, limit: int, label: str) -> bytes:
+    """Read an upload in chunks and stop as soon as it passes the size limit."""
+    chunks, total = [], 0
+    while True:
+        chunk = await file.read(UPLOAD_CHUNK)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit:
+            raise HTTPException(
+                400, f"{label} are limited to {limit // (1024 * 1024)} MB"
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 @app.middleware("http")
@@ -659,6 +723,16 @@ class ServiceIn(BaseModel):
     youtube_url: str = Field(default="", max_length=500)
     reminder_id: int | None = None
 
+    @field_validator("date")
+    @classmethod
+    def _dates(cls, value):
+        return check_date(value, required=False)
+
+    @field_validator("youtube_url")
+    @classmethod
+    def _url(cls, value):
+        return check_url(value)
+
 
 class FuelIn(BaseModel):
     vehicle_id: int
@@ -667,6 +741,11 @@ class FuelIn(BaseModel):
     gallons: float = Field(gt=0)
     cost: float = Field(default=0, ge=0)
     octane: str = Field(default="", max_length=20)
+
+    @field_validator("date")
+    @classmethod
+    def _dates(cls, value):
+        return check_date(value, required=True)
 
 
 class ReminderIn(BaseModel):
@@ -678,6 +757,16 @@ class ReminderIn(BaseModel):
     last_mileage: int = Field(default=0, ge=0)
     due_date: str | None = None
     repeats_yearly: bool = False
+
+    @field_validator("last_date")
+    @classmethod
+    def _dates(cls, value):
+        return check_date(value, required=True)
+
+    @field_validator("due_date")
+    @classmethod
+    def _due(cls, value):
+        return check_date(value)
 
 
 SETTINGS_KEYS = (
@@ -824,21 +913,19 @@ def mileage_estimate(c, vehicle_id: int, today: date | None = None) -> dict[str,
             (vehicle_id,),
         )
     ]
-    points = sorted(set(points))
+    # Malformed dates (from older versions or imports) are skipped, never fatal.
+    points = sorted({(d, odo) for raw, odo in points if (d := iso_date(raw))})
     if not points:
         return {"est_mileage": None, "miles_per_day": None}
     first_date, first_odo = points[0]
     last_date, last_odo = points[-1]
     rate = None
-    days = (
-        datetime.strptime(last_date, "%Y-%m-%d").date()
-        - datetime.strptime(first_date, "%Y-%m-%d").date()
-    ).days
+    days = (last_date - first_date).days
     if len(points) >= 2 and days >= 7 and last_odo > first_odo:
         rate = (last_odo - first_odo) / days
     est = last_odo
     if rate:
-        days_since = (today - datetime.strptime(last_date, "%Y-%m-%d").date()).days
+        days_since = (today - last_date).days
         est = last_odo + rate * max(0, days_since)
     return {
         "est_mileage": round(est),
@@ -975,11 +1062,9 @@ async def upload_vehicle_photo(
         raise HTTPException(
             400, "Vehicle photos must be JPEG, PNG, WebP, GIF, or HEIC images"
         )
-    data = await file.read()
+    data = await read_upload(file, RECEIPT_MAX_BYTES, "Vehicle photos")
     if not data:
         raise HTTPException(400, "Empty file")
-    if len(data) > RECEIPT_MAX_BYTES:
-        raise HTTPException(400, "Vehicle photos are limited to 10 MB")
     with db() as c:
         v = get_visible_vehicle(c, item_id, user)
         require_vehicle_edit(v, user)
@@ -988,7 +1073,7 @@ async def upload_vehicle_photo(
                 "SELECT * FROM receipts WHERE id=?", (v["photo_receipt_id"],)
             ).fetchone()
             if old_photo:
-                (RECEIPTS_DIR / old_photo["stored_name"]).unlink(missing_ok=True)
+                unlink_receipt(old_photo["stored_name"])
                 c.execute(
                     "UPDATE vehicles SET photo_receipt_id=NULL WHERE id=?", (item_id,)
                 )
@@ -1541,7 +1626,7 @@ def delete_receipt_files(c, kind: str, entry_id: int) -> None:
     for r in c.execute(
         "SELECT stored_name FROM receipts WHERE kind=? AND entry_id=?", (kind, entry_id)
     ):
-        (RECEIPTS_DIR / r["stored_name"]).unlink(missing_ok=True)
+        unlink_receipt(r["stored_name"])
     c.execute("DELETE FROM receipts WHERE kind=? AND entry_id=?", (kind, entry_id))
 
 
@@ -1578,11 +1663,9 @@ async def upload_receipt(
         raise HTTPException(
             400, "Receipt photos must be JPEG, PNG, WebP, GIF, or HEIC images"
         )
-    data = await file.read()
+    data = await read_upload(file, RECEIPT_MAX_BYTES, "Receipt photos")
     if not data:
         raise HTTPException(400, "Empty file")
-    if len(data) > RECEIPT_MAX_BYTES:
-        raise HTTPException(400, "Receipt photos are limited to 10 MB")
     with db() as c:
         table = "services" if kind == "service" else "fuel_entries"
         entry = c.execute(
@@ -1621,7 +1704,7 @@ def get_receipt(receipt_id: int, request: Request):
             require_receipt_access(c, row, user)
     if not row:
         raise HTTPException(404, "Receipt not found")
-    path = RECEIPTS_DIR / row["stored_name"]
+    path = receipt_path(row["stored_name"])
     if not path.exists():
         raise HTTPException(404, "Receipt file is missing")
     return FileResponse(path, media_type=row["mime"])
@@ -1642,7 +1725,7 @@ def delete_receipt(receipt_id: int, request: Request):
                 "UPDATE vehicles SET photo_receipt_id=NULL WHERE photo_receipt_id=?",
                 (receipt_id,),
             )
-        (RECEIPTS_DIR / row["stored_name"]).unlink(missing_ok=True)
+        unlink_receipt(row["stored_name"])
         c.execute("DELETE FROM receipts WHERE id=?", (receipt_id,))
     return {"ok": True}
 
@@ -1662,8 +1745,10 @@ def reminder_status(mileage: int, r, today: date | None = None) -> dict[str, Any
         due = r["last_mileage"] + r["miles_interval"]
         progress.append((mileage - r["last_mileage"]) / r["miles_interval"])
         labels.append(f"{max(0, due - mileage):,} mi remaining")
-    if r["months_interval"]:
-        last = datetime.strptime(r["last_date"], "%Y-%m-%d").date()
+    last = iso_date(r["last_date"])
+    if r["months_interval"] and last is None:
+        labels.append("last done date is invalid")
+    if r["months_interval"] and last is not None:
         month_index = last.month - 1 + r["months_interval"]
         year = last.year + month_index // 12
         month = month_index % 12 + 1
@@ -1690,8 +1775,11 @@ def reminder_status(mileage: int, r, today: date | None = None) -> dict[str, Any
             if days_left >= 0
             else f"{-days_left} days late"
         )
-    if r["due_date"]:
-        due_date = datetime.strptime(r["due_date"], "%Y-%m-%d").date()
+    fixed_due = iso_date(r["due_date"])
+    if r["due_date"] and fixed_due is None:
+        labels.append("due date is invalid")
+    if fixed_due is not None:
+        due_date = fixed_due
         if r["repeats_yearly"]:
             max_day = [
                 31,
@@ -1924,6 +2012,14 @@ def update_user(item_id: int, body: UserUpdate, request: Request):
             raise HTTPException(409, "Username already exists")
         if not active:
             c.execute("DELETE FROM sessions WHERE user_id=?", (item_id,))
+        elif body.password:
+            # A new password signs the user out everywhere except the admin's own session.
+            keep = request.cookies.get(COOKIE) if actor["id"] == item_id else None
+            keep_hash = hashlib.sha256(keep.encode()).hexdigest() if keep else ""
+            c.execute(
+                "DELETE FROM sessions WHERE user_id=? AND token_hash<>?",
+                (item_id, keep_hash),
+            )
         return public_user(
             c.execute("SELECT * FROM users WHERE id=?", (item_id,)).fetchone()
         )
@@ -2009,7 +2105,7 @@ def token_auth(request: Request) -> sqlite3.Row:
     token_hash = hashlib.sha256(auth[7:].strip().encode()).hexdigest()
     with db() as c:
         row = c.execute(
-            "SELECT * FROM api_tokens WHERE token_hash=?", (token_hash,)
+            "SELECT * FROM api_tokens WHERE token_hash=? AND revoked=0", (token_hash,)
         ).fetchone()
     if not row:
         ip = client_ip(request)
@@ -2042,6 +2138,11 @@ class NoteIn(BaseModel):
     vehicle_id: int
     date: str
     body: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("date")
+    @classmethod
+    def _dates(cls, value):
+        return check_date(value, required=True)
 
 
 def note_dict(c, row):
@@ -2134,6 +2235,16 @@ class ModIn(BaseModel):
     fluids: str = Field(default="", max_length=500)
     gotchas: str = Field(default="", max_length=1000)
     youtube_url: str = Field(default="", max_length=500)
+
+    @field_validator("date")
+    @classmethod
+    def _dates(cls, value):
+        return check_date(value, required=False)
+
+    @field_validator("youtube_url")
+    @classmethod
+    def _url(cls, value):
+        return check_url(value)
 
 
 def mod_dict(c, row):
@@ -2253,6 +2364,16 @@ class ModV1In(BaseModel):
     gotchas: str = Field(default="", max_length=1000)
     youtube_url: str = Field(default="", max_length=500)
 
+    @field_validator("date")
+    @classmethod
+    def _dates(cls, value):
+        return check_date(value, required=False)
+
+    @field_validator("youtube_url")
+    @classmethod
+    def _url(cls, value):
+        return check_url(value)
+
 
 class ServiceV1In(BaseModel):
     date: str | None = None
@@ -2262,6 +2383,11 @@ class ServiceV1In(BaseModel):
     provider: str = Field(default="", max_length=100)
     notes: str = Field(default="", max_length=1000)
     reminder_id: int | None = None
+
+    @field_validator("date")
+    @classmethod
+    def _dates(cls, value):
+        return check_date(value, required=False)
 
 
 @app.get("/api/v1/vehicles")
@@ -2474,7 +2600,11 @@ async def v1_add_fuel(
 ):
     token = token_auth(request)
     stamp = now_iso()
-    data = await file.read() if file else b""
+    try:
+        date = check_date(date, required=True)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    data = await read_upload(file, RECEIPT_MAX_BYTES, "Receipt photos") if file else b""
     mime = (file.content_type or "").lower() if file else ""
     if file and data:
         if mime not in RECEIPT_TYPES:
@@ -2533,6 +2663,11 @@ class MileageV1In(BaseModel):
     mileage: int = Field(ge=0)
     date: str | None = None
 
+    @field_validator("date")
+    @classmethod
+    def _dates(cls, value):
+        return check_date(value, required=False)
+
 
 @app.put("/api/v1/vehicles/{vehicle_id}/mileage")
 def v1_update_mileage(
@@ -2562,6 +2697,11 @@ def v1_update_mileage(
 class NoteV1In(BaseModel):
     date: str
     body: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("date")
+    @classmethod
+    def _dates(cls, value):
+        return check_date(value, required=True)
 
 
 @app.get("/api/v1/vehicles/{vehicle_id}/notes")
@@ -2777,7 +2917,10 @@ BACKUP_TABLES = (
     "mileage_updates",
     "reminders",
 )
+# Optional in backups so exports made before tokens were included still restore.
+BACKUP_OPTIONAL_TABLES = ("api_tokens",)
 BACKUP_DELETE_ORDER = (
+    "api_tokens",
     "receipts",
     "services",
     "vehicle_specs",
@@ -2800,10 +2943,12 @@ def export_data(request: Request):
     with db() as c:
         tables = {
             name: [dict(r) for r in c.execute(f"SELECT * FROM {name}")]
-            for name in BACKUP_TABLES
+            for name in (*BACKUP_TABLES, *BACKUP_OPTIONAL_TABLES)
         }
     files = {}
     for r in tables["receipts"]:
+        if not STORED_NAME_RE.fullmatch(r["stored_name"] or ""):
+            continue
         path = RECEIPTS_DIR / r["stored_name"]
         if path.is_file():
             files[r["stored_name"]] = base64.b64encode(path.read_bytes()).decode(
@@ -2831,30 +2976,49 @@ def import_data(payload: dict[str, Any], request: Request):
     tables = payload["tables"]
     if any(not isinstance(tables.get(name), list) for name in BACKUP_TABLES):
         raise HTTPException(400, "Backup is missing a required table")
+    restore_tables = BACKUP_TABLES + tuple(
+        name for name in BACKUP_OPTIONAL_TABLES if name in tables
+    )
+    if any(not isinstance(tables[name], list) for name in restore_tables):
+        raise HTTPException(400, "Backup has an invalid table")
     with db() as c:
         schema = {
             name: [r["name"] for r in c.execute(f"PRAGMA table_info({name})")]
-            for name in BACKUP_TABLES
+            for name in restore_tables
         }
-    for name in BACKUP_TABLES:
+    for name in restore_tables:
         allowed = set(schema[name])
         if any(
             not isinstance(row, dict) or not set(row).issubset(allowed)
             for row in tables[name]
         ):
             raise HTTPException(400, f"Invalid {name} rows")
+    # Receipt rows point at files on disk; only names Garage itself generates are allowed.
+    if any(
+        not isinstance(row.get("stored_name"), str)
+        or not STORED_NAME_RE.fullmatch(row["stored_name"])
+        for row in tables["receipts"]
+    ):
+        raise HTTPException(400, "Invalid receipt file name in backup")
     staged = {}
     try:
         for stored, encoded in payload.get("receipt_files", {}).items():
-            if not isinstance(stored, str) or Path(stored).name != stored:
+            if not isinstance(stored, str) or not STORED_NAME_RE.fullmatch(stored):
                 raise ValueError("Invalid receipt filename")
             staged[stored] = base64.b64decode(encoded, validate=True)
     except (ValueError, TypeError):
         raise HTTPException(400, "Invalid receipt file data")
-    with db() as c:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        # Rows reference each other (vehicle photos, tokens, sessions), so constraints are
+        # checked once after the whole restore instead of row by row.
+        conn.execute("PRAGMA foreign_keys=OFF")
+        c = conn
+        c.execute("DELETE FROM sessions")
         for name in BACKUP_DELETE_ORDER:
             c.execute(f"DELETE FROM {name}")
-        for name in BACKUP_TABLES:
+        for name in restore_tables:
             cols = schema[name]
             for row in tables[name]:
                 present = [col for col in cols if col in row]
@@ -2864,12 +3028,45 @@ def import_data(payload: dict[str, Any], request: Request):
                     tuple(row[col] for col in present),
                 )
         migrate_header_fields(c)  # backups from before specs owned fuel/tire/oil
+        if c.execute("PRAGMA foreign_key_check").fetchall():
+            raise HTTPException(400, "Backup has rows that point at missing records")
+        conn.commit()
+    except sqlite3.DatabaseError as exc:
+        conn.rollback()
+        raise HTTPException(400, f"Backup could not be restored: {exc}")
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
     for path in RECEIPTS_DIR.iterdir():
         if path.is_file():
             path.unlink()
     for stored, data in staged.items():
         (RECEIPTS_DIR / stored).write_bytes(data)
     return {"ok": True, "version": 3, "vehicles": len(tables["vehicles"])}
+
+
+def require_docs_access(request: Request) -> None:
+    """API docs and schema need a signed-in session or a valid API token."""
+    if request.headers.get("authorization", "").lower().startswith("bearer "):
+        token_auth(request)
+        return
+    current_user(request)
+
+
+@app.get("/api/openapi.json", include_in_schema=False)
+def openapi_schema(request: Request):
+    require_docs_access(request)
+    return app.openapi()
+
+
+@app.get("/api/docs", include_in_schema=False)
+def api_docs(request: Request):
+    require_docs_access(request)
+    return get_swagger_ui_html(
+        openapi_url="/api/openapi.json", title="Garage - Swagger UI"
+    )
 
 
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
