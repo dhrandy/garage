@@ -50,6 +50,10 @@ Fresh installs start with one example vehicle, a 1969 Mustang, that you can edit
 
 Each vehicle can have a photo (uploaded from the vehicle's **Edit** form, with camera capture on phones). Photos are stored under `/app/data/receipts` with receipt images. **Settings → Vehicle photos** controls whether photos replace the emoji icon on vehicle cards and pages; turning it off restores the emoji icons without deleting any photos.
 
+## Mobile layout
+
+The app is built for phones as much as desktops. On small screens a vehicle's photo becomes a full-width banner at the top of its page, form controls use a 16px font so iOS does not zoom the page when a field is focused, buttons and toggles keep at least 44px touch targets, the vehicle tab bar stays pinned under the header while scrolling, and the layout respects the notch and home-indicator safe areas on modern phones.
+
 ## Settings
 
 Administrators can open **Settings** to rename the garage. The name is stored in SQLite and appears in the header and on the garage home screen. New installs default to **Your Garage**.
