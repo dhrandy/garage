@@ -95,9 +95,13 @@ def test_fuel_log_computes_mpg_and_bumps_mileage(tmp_path):
         admin.post('/api/users', json={'username':'member-test','password':'password-456','is_admin':False})
     with TestClient(main.app) as member:
         member.post('/api/login', json={'username':'member-test','password':'password-456'})
-        assert member.put('/api/fuel/%s' % second['id'], json={'vehicle_id':1,'date':'2026-09-15','odometer':20310,'gallons':10,'cost':37}).status_code == 200
-        assert member.delete('/api/fuel/%s' % second['id']).status_code == 200
-        assert len(member.get('/api/fuel?vehicle_id=1').json()) == 1
+        assert member.put('/api/fuel/%s' % second['id'], json={'vehicle_id':1,'date':'2026-09-15','odometer':20310,'gallons':10,'cost':37}).status_code == 403
+        assert member.delete('/api/fuel/%s' % second['id']).status_code == 403
+        assert len(member.get('/api/fuel?vehicle_id=1').json()) == 2
+    with TestClient(main.app) as admin_again:
+        admin_again.post('/api/login', json={'username':'admin-test','password':'password-123'})
+        assert admin_again.delete('/api/fuel/%s' % second['id']).status_code == 200
+        assert len(admin_again.get('/api/fuel?vehicle_id=1').json()) == 1
 
 
 PNG_BYTES = __import__('base64').b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')
@@ -580,3 +584,129 @@ def test_swagger_docs_csp_allows_required_assets(tmp_path):
         assert 'https://cdn.jsdelivr.net' in csp and 'https://fastapi.tiangolo.com' in csp
         assert "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net" in csp
         assert 'https://cdn.jsdelivr.net' not in client.get('/api/status').headers['content-security-policy']
+
+
+def test_vehicle_owner_permissions(tmp_path):
+    main.DB_PATH = tmp_path / 'owner-perms.db'
+    main.RECEIPTS_DIR = tmp_path / 'receipts'
+    main.RECEIPTS_DIR.mkdir(exist_ok=True)
+    main._login_failures.clear(); main._api_calls.clear(); main._api_failures.clear()
+    main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup', json={'username':'admin-test','password':'password-123'})
+        member = admin.post('/api/users', json={'username':'member-test','password':'password-456','is_admin':False}).json()
+        other = admin.post('/api/users', json={'username':'other-test','password':'password-789','is_admin':False}).json()
+        own = admin.post('/api/vehicles', json={'name':'Member Car','year':'2020','mileage':100,'owner_id':member['id']}).json()
+        theirs = admin.post('/api/vehicles', json={'name':'Other Car','year':'2021','mileage':200,'owner_id':other['id']}).json()
+        assert own['owner_id'] == member['id'] and theirs['owner_id'] == other['id']
+        c_service = admin.post('/api/services', json={'vehicle_id':theirs['id'],'date':'2026-09-01','mileage':210,'type':'Oil change','cost':50}).json()
+        c_fuel = admin.post('/api/fuel', json={'vehicle_id':theirs['id'],'date':'2026-09-01','odometer':210,'gallons':8,'cost':30}).json()
+        c_reminder = admin.post('/api/reminders', json={'vehicle_id':theirs['id'],'name':'Oil','miles_interval':5000,'last_date':'2026-09-01','last_mileage':210}).json()
+        c_note = admin.post('/api/notes', json={'vehicle_id':theirs['id'],'date':'2026-09-01','body':'theirs'}).json()
+        c_mod = admin.post('/api/mods', json={'vehicle_id':theirs['id'],'name':'Roof rack','price':300}).json()
+        c_receipt = admin.post('/api/receipts', data={'kind':'fuel','entry_id':str(c_fuel['id'])}, files={'file':('r.png', PNG_BYTES, 'image/png')}).json()
+    with TestClient(main.app) as member_client:
+        member_client.post('/api/login', json={'username':'member-test','password':'password-456'})
+        vid = own['id']
+        # owner can edit their own vehicle and everything on it
+        assert member_client.put(f'/api/vehicles/{vid}', json={'name':'Member Car','year':'2020','mileage':150,'icon':'🚗'}).status_code == 200
+        assert member_client.put(f'/api/vehicles/{vid}/specs', json={'engine':'2.5L inline-4'}).status_code == 200
+        assert member_client.post(f'/api/vehicles/{vid}/photo', files={'file':('car.png', PNG_BYTES, 'image/png')}).status_code == 201
+        service = member_client.post('/api/services', json={'vehicle_id':vid,'date':'2026-09-10','mileage':160,'type':'Tire rotation','cost':25}).json()
+        assert member_client.put(f"/api/services/{service['id']}", json={'vehicle_id':vid,'date':'2026-09-10','mileage':160,'type':'Tire rotation','cost':20}).status_code == 200
+        receipt = member_client.post('/api/receipts', data={'kind':'service','entry_id':str(service['id'])}, files={'file':('r.png', PNG_BYTES, 'image/png')})
+        assert receipt.status_code == 201
+        assert member_client.delete(f"/api/receipts/{receipt.json()['id']}").status_code == 200
+        assert member_client.delete(f"/api/services/{service['id']}").status_code == 200
+        fuel = member_client.post('/api/fuel', json={'vehicle_id':vid,'date':'2026-09-11','odometer':170,'gallons':9,'cost':32}).json()
+        assert member_client.put(f"/api/fuel/{fuel['id']}", json={'vehicle_id':vid,'date':'2026-09-11','odometer':170,'gallons':9,'cost':33}).status_code == 200
+        assert member_client.delete(f"/api/fuel/{fuel['id']}").status_code == 200
+        reminder = member_client.post('/api/reminders', json={'vehicle_id':vid,'name':'Oil','miles_interval':5000,'last_date':'2026-09-01','last_mileage':100}).json()
+        assert member_client.put(f"/api/reminders/{reminder['id']}", json={'vehicle_id':vid,'name':'Oil','miles_interval':6000,'last_date':'2026-09-01','last_mileage':100}).status_code == 200
+        assert member_client.delete(f"/api/reminders/{reminder['id']}").status_code == 200
+        note = member_client.post('/api/notes', json={'vehicle_id':vid,'date':'2026-09-12','body':'mine'}).json()
+        assert member_client.put(f"/api/notes/{note['id']}", json={'vehicle_id':vid,'date':'2026-09-12','body':'mine updated'}).status_code == 200
+        assert member_client.delete(f"/api/notes/{note['id']}").status_code == 200
+        mod = member_client.post('/api/mods', json={'vehicle_id':vid,'name':'Floor mats','price':80}).json()
+        assert member_client.put(f"/api/mods/{mod['id']}", json={'vehicle_id':vid,'name':'Floor mats','price':75}).status_code == 200
+        assert member_client.delete(f"/api/mods/{mod['id']}").status_code == 200
+        tid = theirs['id']
+        # reads on the other user's shared vehicle still work
+        assert member_client.get(f'/api/services?vehicle_id={tid}').status_code == 200
+        assert member_client.get(f'/api/vehicles/{tid}/specs').status_code == 200
+        assert member_client.get(f'/api/receipts/{c_receipt["id"]}').status_code == 200
+        # but every mutation on it is rejected
+        assert member_client.put(f'/api/vehicles/{tid}', json={'name':'Hijacked','year':'2021','mileage':200,'icon':'🚗'}).status_code == 403
+        assert member_client.delete(f'/api/vehicles/{tid}').status_code == 403
+        assert member_client.put(f'/api/vehicles/{tid}/specs', json={'engine':'x'}).status_code == 403
+        assert member_client.post(f'/api/vehicles/{tid}/photo', files={'file':('car.png', PNG_BYTES, 'image/png')}).status_code == 403
+        assert member_client.post('/api/services', json={'vehicle_id':tid,'date':'2026-09-10','mileage':220,'type':'Nope'}).status_code == 403
+        assert member_client.put(f"/api/services/{c_service['id']}", json={'vehicle_id':tid,'date':'2026-09-10','mileage':220,'type':'Nope'}).status_code == 403
+        assert member_client.delete(f"/api/services/{c_service['id']}").status_code == 403
+        assert member_client.post('/api/fuel', json={'vehicle_id':tid,'date':'2026-09-10','odometer':220,'gallons':8,'cost':30}).status_code == 403
+        assert member_client.put(f"/api/fuel/{c_fuel['id']}", json={'vehicle_id':tid,'date':'2026-09-10','odometer':220,'gallons':8,'cost':30}).status_code == 403
+        assert member_client.delete(f"/api/fuel/{c_fuel['id']}").status_code == 403
+        assert member_client.post('/api/reminders', json={'vehicle_id':tid,'name':'Nope','miles_interval':5000,'last_date':'2026-09-01','last_mileage':210}).status_code == 403
+        assert member_client.put(f"/api/reminders/{c_reminder['id']}", json={'vehicle_id':tid,'name':'Nope','miles_interval':5000,'last_date':'2026-09-01','last_mileage':210}).status_code == 403
+        assert member_client.delete(f"/api/reminders/{c_reminder['id']}").status_code == 403
+        assert member_client.post('/api/notes', json={'vehicle_id':tid,'date':'2026-09-10','body':'nope'}).status_code == 403
+        assert member_client.put(f"/api/notes/{c_note['id']}", json={'vehicle_id':tid,'date':'2026-09-10','body':'nope'}).status_code == 403
+        assert member_client.delete(f"/api/notes/{c_note['id']}").status_code == 403
+        assert member_client.post('/api/mods', json={'vehicle_id':tid,'name':'Nope','price':1}).status_code == 403
+        assert member_client.put(f"/api/mods/{c_mod['id']}", json={'vehicle_id':tid,'name':'Nope','price':1}).status_code == 403
+        assert member_client.delete(f"/api/mods/{c_mod['id']}").status_code == 403
+        assert member_client.post('/api/receipts', data={'kind':'fuel','entry_id':str(c_fuel['id'])}, files={'file':('r.png', PNG_BYTES, 'image/png')}).status_code == 403
+        assert member_client.delete(f"/api/receipts/{c_receipt['id']}").status_code == 403
+        # entries cannot be moved between vehicles across the ownership line, either way
+        moved_out = member_client.post('/api/services', json={'vehicle_id':vid,'date':'2026-09-13','mileage':180,'type':'Mine'}).json()
+        assert member_client.put(f"/api/services/{moved_out['id']}", json={'vehicle_id':tid,'date':'2026-09-13','mileage':180,'type':'Mine'}).status_code == 403
+        assert member_client.put(f"/api/services/{c_service['id']}", json={'vehicle_id':vid,'date':'2026-09-01','mileage':210,'type':'Oil change'}).status_code == 403
+        assert member_client.delete(f"/api/services/{moved_out['id']}").status_code == 200
+    with TestClient(main.app) as admin_again:
+        admin_again.post('/api/login', json={'username':'admin-test','password':'password-123'})
+        # admin keeps full access to another user's vehicle
+        tid = theirs['id']
+        assert admin_again.put(f'/api/vehicles/{tid}', json={'name':'Other Car','year':'2021','mileage':205,'icon':'🚗'}).status_code == 200
+        assert admin_again.put(f'/api/vehicles/{tid}/specs', json={'engine':'3.6L V6'}).status_code == 200
+        service = admin_again.post('/api/services', json={'vehicle_id':tid,'date':'2026-09-14','mileage':230,'type':'Brake pads','cost':120}).json()
+        assert admin_again.put(f"/api/services/{c_service['id']}", json={'vehicle_id':tid,'date':'2026-09-01','mileage':210,'type':'Oil change','cost':55}).status_code == 200
+        assert admin_again.delete(f"/api/services/{service['id']}").status_code == 200
+        assert admin_again.delete(f'/api/vehicles/{tid}').status_code == 200
+
+
+def test_v1_token_permissions_follow_token_owner(tmp_path):
+    main.DB_PATH = tmp_path / 'v1-owner-perms.db'
+    main._login_failures.clear(); main._api_calls.clear(); main._api_failures.clear()
+    main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup', json={'username':'admin-test','password':'password-123'})
+        other = admin.post('/api/users', json={'username':'other-test','password':'password-789','is_admin':False}).json()
+        second = admin.post('/api/users', json={'username':'second-admin','password':'password-000','is_admin':True}).json()
+        theirs = admin.post('/api/vehicles', json={'name':'Other Car','year':'2021','mileage':200,'owner_id':other['id']}).json()
+    with TestClient(main.app) as second_client:
+        second_client.post('/api/login', json={'username':'second-admin','password':'password-000'})
+        own = second_client.post('/api/vehicles', json={'name':'Second Car','year':'2022','mileage':50}).json()
+        token = second_client.post('/api/tokens', json={'name':'second-script'}).json()['token']
+    with TestClient(main.app) as admin:
+        admin.post('/api/login', json={'username':'admin-test','password':'password-123'})
+        assert admin.put(f"/api/users/{second['id']}", json={'is_admin':False}).status_code == 200
+    auth = {'Authorization': f'Bearer {token}'}
+    with TestClient(main.app) as client:
+        # the demoted token owner can still write to their own vehicle
+        assert client.post(f"/api/v1/vehicles/{own['id']}/services", headers=auth, json={'date':'2026-09-15','mileage':60,'type':'Wash'}).status_code == 201
+        assert client.put(f"/api/v1/vehicles/{own['id']}/mileage", headers=auth, json={'mileage':65}).status_code == 200
+        assert client.post(f"/api/v1/vehicles/{own['id']}/notes", headers=auth, json={'date':'2026-09-15','body':'mine'}).status_code == 201
+        assert client.post(f"/api/v1/vehicles/{own['id']}/mods", headers=auth, json={'name':'Mats','price':50}).status_code == 201
+        assert client.put(f"/api/v1/vehicles/{own['id']}/specs", headers=auth, json={'engine':'1.5L'}).status_code == 200
+        assert client.post(f"/api/v1/vehicles/{own['id']}/fuel", headers=auth, data={'date':'2026-09-15','odometer':'65','gallons':'5','cost':'20'}).status_code == 201
+        # but not to another user's vehicle
+        tid = theirs['id']
+        assert client.post(f'/api/v1/vehicles/{tid}/services', headers=auth, json={'date':'2026-09-15','mileage':210,'type':'Nope'}).status_code == 403
+        assert client.put(f'/api/v1/vehicles/{tid}/mileage', headers=auth, json={'mileage':999}).status_code == 403
+        assert client.post(f'/api/v1/vehicles/{tid}/notes', headers=auth, json={'date':'2026-09-15','body':'nope'}).status_code == 403
+        assert client.post(f'/api/v1/vehicles/{tid}/mods', headers=auth, json={'name':'Nope'}).status_code == 403
+        assert client.put(f'/api/v1/vehicles/{tid}/specs', headers=auth, json={'engine':'x'}).status_code == 403
+        assert client.post(f'/api/v1/vehicles/{tid}/fuel', headers=auth, data={'date':'2026-09-15','odometer':'210','gallons':'5','cost':'20'}).status_code == 403
+        # reads stay open
+        assert client.get(f'/api/v1/vehicles/{tid}/services', headers=auth).status_code == 200
+        assert client.get(f'/api/v1/vehicles/{tid}/specs', headers=auth).status_code == 200
