@@ -327,3 +327,50 @@ def test_vehicle_card_cost_rows_have_even_spacing(app_url):
                 )
             page.close()
         browser.close()
+
+
+def test_compact_layout_on_tiny_square_screens(app_url):
+    """Flip-phone cover screens get a denser layout; tall phones keep the 650px one."""
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        sizes = {}
+        for width, height in ((360, 400), (400, 400), (390, 844)):
+            page = browser.new_page(viewport={"width": width, "height": height})
+            page.goto(app_url)
+            page.wait_for_selector("h1")
+            if page.get_by_role("heading", name="Set up Garage").count():
+                page.locator("[name=username]").fill("admin-test")
+                page.locator("[name=password]").fill("password-123")
+                page.get_by_role("button", name="Create administrator").click()
+            elif page.locator("[name=username]").count():
+                page.locator("[name=username]").fill("admin-test")
+                page.locator("[name=password]").fill("password-123")
+                page.get_by_role("button", name="Sign in").click()
+            expect(page.locator(".vehicle-card").first).to_be_visible()
+            m = page.evaluate("""() => {
+                const card=document.querySelector('.vehicle-card').getBoundingClientRect();
+                const btns=[...document.querySelectorAll('.topbar button')].filter(b=>b.offsetParent);
+                return {
+                    overflow: document.documentElement.scrollWidth > innerWidth,
+                    card: card.height,
+                    h1: parseFloat(getComputedStyle(document.querySelector('h1')).fontSize),
+                    minTap: Math.min(...btns.map(b=>b.getBoundingClientRect().height)),
+                };
+            }""")
+            assert not m["overflow"], f"horizontal overflow at {width}x{height}"
+            assert m["minTap"] >= 40, f"header tap target below 40px at {width}x{height}"
+            page.locator(".vehicle-card").first.click()
+            expect(page.locator(".tab").first).to_be_visible()
+            tabs = page.evaluate(
+                "Math.min(...[...document.querySelectorAll('.tab')].map(t=>t.getBoundingClientRect().height))"
+            )
+            assert tabs >= 40, f"tab tap target below 40px at {width}x{height}"
+            assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
+            sizes[(width, height)] = m
+            page.close()
+        browser.close()
+    tall = sizes[(390, 844)]
+    assert tall["h1"] == 28, "regular phone layout changed"
+    for size in ((360, 400), (400, 400)):
+        assert sizes[size]["h1"] < tall["h1"]
+        assert sizes[size]["card"] < tall["card"] * 0.75, f"cards not compact at {size}"
