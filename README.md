@@ -158,13 +158,17 @@ API requests are rate limited: 100 requests per minute per token, and repeated i
 
 ## Use with an AI assistant
 
-The REST API works well with AI assistants that can make HTTP requests.
+The REST API works well with AI assistants that can make HTTP requests. An administrator can create a token in **Settings → API tokens**. Each token acts with its creator's permissions, including the same vehicle visibility and write access.
 
-1. Create a token in **Settings → API tokens** (administrator account).
-2. Give your assistant your Garage server URL and the token, and tell it what you want. For example:
-   - "Add a fuel fill-up to my truck: date 2026-09-21, odometer 24310, gallons 10.2, cost $36.50, receipt attached"
-   - "What maintenance is due on my vehicles?"
-3. Point it at the interactive OpenAPI docs at `/api/docs` on your server so it can learn the exact endpoints and payloads.
+Copy this prompt and replace the server and token placeholders with your own values:
+
+```text
+You have access to my Garage vehicle tracker API.
+Base URL: https://your-server.example/api/v1
+Auth: send header "Authorization: Bearer TOKEN_HERE" on every request.
+API docs and schema: https://your-server.example/api/docs
+Use it to read vehicle info and specs, log fuel from receipts, log services and mods, and check maintenance reminders. Read the schema at https://your-server.example/api/openapi.json before your first write. Confirm the vehicle, date, and cost with me before logging anything.
+```
 
 A token is a password: do not paste it in public chats or repositories, prefer HTTPS so it is not sent in plain text, and revoke it in Settings if it is ever exposed.
 
