@@ -1074,13 +1074,17 @@ class TokenIn(BaseModel):
 
 @app.get("/api/tokens")
 def list_tokens(request: Request):
-    current_user(request, True)
+    user = current_user(request)
     with db() as c:
-        return [token_dict(r) for r in c.execute("SELECT * FROM api_tokens ORDER BY id")]
+        if user["is_admin"]:
+            rows = c.execute("SELECT * FROM api_tokens ORDER BY id")
+        else:
+            rows = c.execute("SELECT * FROM api_tokens WHERE created_by=? ORDER BY id", (user["id"],))
+        return [token_dict(r) for r in rows]
 
 @app.post("/api/tokens", status_code=201)
 def create_token(body: TokenIn, request: Request):
-    user = current_user(request, True)
+    user = current_user(request)
     raw = "gar_" + secrets.token_urlsafe(32)
     with db() as c:
         cur = c.execute("INSERT INTO api_tokens(name,token_hash,prefix,created_by,created_at) VALUES(?,?,?,?,?)",
@@ -1089,9 +1093,13 @@ def create_token(body: TokenIn, request: Request):
 
 @app.delete("/api/tokens/{item_id}")
 def revoke_token(item_id: int, request: Request):
-    current_user(request, True)
+    user = current_user(request)
     with db() as c:
-        if not c.execute("DELETE FROM api_tokens WHERE id=?", (item_id,)).rowcount:
+        if user["is_admin"]:
+            deleted = c.execute("DELETE FROM api_tokens WHERE id=?", (item_id,)).rowcount
+        else:
+            deleted = c.execute("DELETE FROM api_tokens WHERE id=? AND created_by=?", (item_id, user["id"])).rowcount
+        if not deleted:
             raise HTTPException(404, "Token not found")
     return {"ok": True}
 
