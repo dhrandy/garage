@@ -45,8 +45,8 @@ def test_menu_tabs_and_responsive_layout(app_url):
             boxes=[fields.nth(i).bounding_box() for i in range(fields.count())]
             assert all(boxes[i]['y'] < boxes[i+1]['y'] for i in range(len(boxes)-1))
             assert all(b['x']+b['width'] <= width for b in boxes)
-            fields.nth(0).locator('input').fill('2.0L inline-4')
-            fields.nth(26).locator('input').fill('17 × 7 in')
+            realistic_specs=['5.0L Ti-VCT V8','5.0L / 302 cu in','10-speed SelectShift automatic','4x2; electronic-locking rear differential','SuperCrew 4-door pickup, Lariat','Antimatter Blue Metallic','1FTFW1E50MFA12345','400 hp @ 6,000 rpm','410 lb-ft @ 4,250 rpm','4,705 lb curb weight','145.4 in','L 231.7 in, W 79.9 in excl mirrors, H 75.6 in, ground clearance 8.5 in','26 gal','13,000 lb with Max Trailer Tow Package','2,445 lb maximum payload','17 mpg EPA city','23 mpg EPA highway','SAE 5W-30 full synthetic','7.7 qt with filter','H7 AGM / 94R','Motorcraft SP-594 / 0.049 in gap','22 in driver / 22 in passenger','Motorcraft Yellow prediluted coolant','DOT 4 LV high performance','Motorcraft FA-1883','150 lb-ft','18 in machined aluminum; 265/60R18']
+            for i,value in enumerate(realistic_specs): fields.nth(i).locator('input').fill(value)
             expect(fields.nth(26).locator('label')).to_have_text('Wheel size')
             page.get_by_role('button',name='Save').click(force=True)
             grid=page.locator('.spec-sections')
@@ -54,11 +54,19 @@ def test_menu_tabs_and_responsive_layout(app_url):
             expect(grid).to_be_visible()
             expect(grid.locator('.spec-section',has_text='Wheels and Tires')).to_be_visible()
             expect(grid.locator('dt',has_text='Wheel size')).to_be_visible()
-            expect(grid.locator('dd',has_text='17 × 7 in')).to_be_visible()
+            expect(grid.locator('dd',has_text='18 in machined aluminum; 265/60R18')).to_be_visible()
             grid_box=grid.bounding_box()
             assert grid_box is not None and grid_box['x'] >= 0 and grid_box['x']+grid_box['width'] <= width
             sections=page.locator('.spec-section')
-            expect(sections).to_have_count(2)
+            expect(sections).to_have_count(6)
+            section_boxes=[sections.nth(i).bounding_box() for i in range(sections.count())]
+            assert all(box is not None for box in section_boxes)
+            columns={}
+            for box in section_boxes: columns.setdefault(round(box['x']),[]).append(box)
+            assert len(columns)==(2 if width==1920 else 1)
+            for boxes in columns.values():
+                boxes.sort(key=lambda box:box['y'])
+                assert all(abs(boxes[i+1]['y']-(boxes[i]['y']+boxes[i]['height']+14)) < 2 for i in range(len(boxes)-1))
             row=page.locator('.spec-row').first
             row_box=row.bounding_box();label_box=row.locator('dt').bounding_box();value_box=row.locator('dd').bounding_box()
             assert row_box is not None and label_box is not None and value_box is not None
