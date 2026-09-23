@@ -590,14 +590,16 @@ def test_backup_is_admin_only_and_round_trips_current_fields(tmp_path):
         assert backup['version']==3 and backup['tables']['notes'] and backup['tables']['modifications']
         assert backup['tables']['reminders'][0]['repeats_yearly']==1 and backup['tables']['fuel_entries'][0]['octane']=='93'
         assert backup['tables']['services'][0]['fluids']=='5 qt' and backup['receipt_files']
-        assert next(row for row in backup['tables']['vehicles'] if row['id']==vehicle['id'])['tire_size']=='225/45R17'
+        assert next(row for row in backup['tables']['vehicles'] if row['id']==vehicle['id'])['tire_size']==''
+        assert next(row for row in backup['tables']['vehicle_specs'] if row['vehicle_id']==vehicle['id'])['tire_size']=='225/45R17'
         assert next(row for row in backup['tables']['vehicle_specs'] if row['vehicle_id']==vehicle['id'])['wheel_size']=='17 × 7.5 in'
         restored=admin.post('/api/import',json=backup)
         assert restored.status_code==200 and restored.json()['version']==3
         assert admin.post('/api/login',json={'username':'admin','password':'password-123'}).status_code==200
         again=admin.get('/api/export').json()
         assert again['tables']['services'][0]['fluids']=='5 qt' and again['receipt_files']==backup['receipt_files']
-        assert next(row for row in again['tables']['vehicles'] if row['id']==vehicle['id'])['tire_size']=='225/45R17'
+        assert next(row for row in again['tables']['vehicle_specs'] if row['vehicle_id']==vehicle['id'])['tire_size']=='225/45R17'
+        assert next(v for v in admin.get('/api/vehicles').json() if v['id']==vehicle['id'])['tire_size']=='225/45R17'
         assert next(row for row in again['tables']['vehicle_specs'] if row['vehicle_id']==vehicle['id'])['wheel_size']=='17 × 7.5 in'
     with TestClient(main.app) as member:
         member.post('/api/login',json={'username':'member','password':'password-123'})
@@ -811,3 +813,107 @@ def test_per_user_garage_visibility(tmp_path):
         admin_again.put('/api/me/vehicle-view',json={'show_all':True})
         names={v['name'] for v in admin_again.get('/api/vehicles').json()}
         assert 'Mine private' in names and 'Theirs private' in names
+
+
+def test_tire_size_and_fuel_type_are_spec_fields_that_drive_header_chips(tmp_path):
+    main.DB_PATH=tmp_path/'tire-spec.db'; main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup',json={'username':'admin','password':'password-123'})
+        blank=admin.get('/api/vehicles/1/specs').json()
+        assert blank['tire_size']=='' and blank['fuel_type']==''
+        saved=admin.put('/api/vehicles/1/specs',json={'wheel_size':'18 × 7.5 in','tire_size':' 265/60R18 ','wheel_lug_torque':'150 lb-ft','fuel_type':'Regular gasoline','oil_type':'5W-30','oil_capacity':'6 qt'}).json()
+        assert saved['tire_size']=='265/60R18' and saved['wheel_size']=='18 × 7.5 in' and saved['fuel_type']=='Regular gasoline'
+        vehicle=admin.get('/api/vehicles').json()[0]
+        assert (vehicle['tire_size'],vehicle['fuel_type'],vehicle['oil_spec'])==('265/60R18','Regular gasoline','5W-30, 6 qt')
+        # an older client that replaces specs without the new keys must not wipe them
+        kept=admin.put('/api/vehicles/1/specs',json={'wheel_size':'18 × 8 in','oil_type':'5W-30','oil_capacity':'6 qt'}).json()
+        assert kept['tire_size']=='265/60R18' and kept['fuel_type']=='Regular gasoline' and kept['wheel_size']=='18 × 8 in'
+        # an explicit empty string clears
+        assert admin.put('/api/vehicles/1/specs',json={**kept,'tire_size':''}).json()['tire_size']==''
+        assert admin.get('/api/vehicles').json()[0]['tire_size']==''
+        assert admin.put('/api/vehicles/1/specs',json={'tire_size':'x'*81}).status_code==422
+        # token API reads and writes the field too
+        token=admin.post('/api/tokens',json={'name':'tires'}).json()['token'];auth={'Authorization':f'Bearer {token}'}
+        assert admin.put('/api/v1/vehicles/1/specs',headers=auth,json={**kept,'tire_size':'275/65R18'}).json()['tire_size']=='275/65R18'
+        assert admin.get('/api/v1/vehicles/1/specs',headers=auth).json()['tire_size']=='275/65R18'
+        assert admin.get('/api/v1/vehicles',headers=auth).json()[0]['tire_size']=='275/65R18'
+        # legacy vehicle-level writes land in specs; omitting them leaves specs untouched
+        vehicle=admin.get('/api/vehicles').json()[0]
+        body={k:vehicle[k] for k in ('name','year','mileage','icon','private')}
+        after=admin.put('/api/vehicles/1',json=body).json()
+        assert after['tire_size']=='275/65R18' and after['oil_spec']=='5W-30, 6 qt'
+        after=admin.put('/api/vehicles/1',json={**body,'tire_size':'205/45 R17','oil_spec':'0W-20, 4.4 qt','fuel_type':'Premium gasoline'}).json()
+        assert (after['tire_size'],after['oil_spec'],after['fuel_type'])==('205/45 R17','0W-20, 4.4 qt','Premium gasoline')
+        specs=admin.get('/api/vehicles/1/specs').json()
+        assert (specs['tire_size'],specs['oil_type'],specs['oil_capacity'])==('205/45 R17','0W-20','4.4 qt')
+        created=admin.post('/api/vehicles',json={'name':'Truck','tire_size':'245/75R16'}).json()
+        assert created['tire_size']=='245/75R16' and admin.get(f"/api/vehicles/{created['id']}/specs").json()['tire_size']=='245/75R16'
+        with main.db() as c:
+            assert c.execute("SELECT count(*) FROM vehicles WHERE tire_size<>'' OR fuel_type<>'' OR oil_spec<>''").fetchone()[0]==0
+
+
+def test_split_oil_spec_uses_existing_text_only():
+    assert main.split_oil_spec('0W-20, 5.3 qt')==('0W-20','5.3 qt')
+    assert main.split_oil_spec('5W-30, 6 L')==('5W-30','6 L')
+    assert main.split_oil_spec('5W-30')==('5W-30','')
+    assert main.split_oil_spec('Full synthetic, see manual')==('Full synthetic, see manual','')
+    assert main.join_oil_spec('0W-20','')=='0W-20' and main.join_oil_spec('','')==''
+
+
+def _legacy_header(vehicle_id, fuel, tire, oil):
+    with main.db() as c:
+        c.execute("UPDATE vehicles SET fuel_type=?,tire_size=?,oil_spec=? WHERE id=?",(fuel,tire,oil,vehicle_id))
+
+
+def test_startup_migrates_vehicle_level_header_values_into_specs(tmp_path):
+    main.DB_PATH=tmp_path/'migrate.db'; main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup',json={'username':'admin','password':'password-123'})
+        truck=admin.post('/api/vehicles',json={'name':'Pickup'}).json()['id']
+        roadster=admin.post('/api/vehicles',json={'name':'Roadster'}).json()['id']
+        clash=admin.post('/api/vehicles',json={'name':'Clash'}).json()['id']
+        admin.put(f'/api/vehicles/{roadster}/specs',json={'wheel_size':'17 × 7 in','oil_capacity':'4.5 qt'})
+        admin.put(f'/api/vehicles/{clash}/specs',json={'tire_size':'225/40R18','oil_type':'5W-30'})
+    # simulate a database written by the previous release: values only at vehicle level
+    _legacy_header(truck,'Regular gasoline','265/60R18','5W-30, 6 qt')
+    _legacy_header(roadster,'Premium gasoline','205/45 R17','0W-20')
+    _legacy_header(clash,'','225/45R17','0W-20, 4 qt')
+    main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/login',json={'username':'admin','password':'password-123'})
+        vehicles={v['id']:v for v in admin.get('/api/vehicles').json()}
+        assert (vehicles[truck]['tire_size'],vehicles[truck]['fuel_type'],vehicles[truck]['oil_spec'])==('265/60R18','Regular gasoline','5W-30, 6 qt')
+        assert (vehicles[roadster]['tire_size'],vehicles[roadster]['fuel_type'],vehicles[roadster]['oil_spec'])==('205/45 R17','Premium gasoline','0W-20, 4.5 qt')
+        truck_specs=admin.get(f'/api/vehicles/{truck}/specs').json()
+        assert (truck_specs['tire_size'],truck_specs['oil_type'],truck_specs['oil_capacity'])==('265/60R18','5W-30','6 qt')
+        roadster_specs=admin.get(f'/api/vehicles/{roadster}/specs').json()
+        assert roadster_specs['wheel_size']=='17 × 7 in' and roadster_specs['tire_size']=='205/45 R17'
+        # a different value already in specs wins, and the old header value is kept as a note
+        assert vehicles[clash]['tire_size']=='225/40R18' and vehicles[clash]['oil_spec']=='5W-30, 4 qt'
+        notes=[n for n in admin.get('/api/notes').json() if n['vehicle_id']==clash]
+        assert len(notes)==1 and 'Tires: 225/45R17' in notes[0]['body'] and 'Oil: 0W-20, 4 qt' in notes[0]['body']
+        # clearing a value after migration is not undone by the next restart
+        admin.put(f'/api/vehicles/{truck}/specs',json={**truck_specs,'tire_size':''})
+    main.init_db(); main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/login',json={'username':'admin','password':'password-123'})
+        assert admin.get(f'/api/vehicles/{truck}/specs').json()['tire_size']==''
+        assert len([n for n in admin.get('/api/notes').json() if n['vehicle_id']==clash])==1
+    with main.db() as c:
+        assert c.execute("SELECT count(*) FROM vehicles WHERE tire_size<>'' OR fuel_type<>'' OR oil_spec<>''").fetchone()[0]==0
+
+
+def test_importing_a_pre_migration_backup_moves_header_values_into_specs(tmp_path):
+    main.DB_PATH=tmp_path/'old-backup.db'; main.RECEIPTS_DIR=tmp_path/'receipts-old'; main.RECEIPTS_DIR.mkdir(); main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post('/api/setup',json={'username':'admin','password':'password-123'})
+        vid=admin.post('/api/vehicles',json={'name':'Old Backup Car'}).json()['id']
+        backup=admin.get('/api/export').json()
+        row=next(r for r in backup['tables']['vehicles'] if r['id']==vid)
+        row.update(fuel_type='Premium gasoline',tire_size='205/45 R17',oil_spec='0W-20, 4.4 qt')
+        backup['tables']['vehicle_specs']=[{k:v for k,v in r.items() if k not in ('tire_size','fuel_type')} for r in backup['tables']['vehicle_specs']]
+        assert admin.post('/api/import',json=backup).status_code==200
+        admin.post('/api/login',json={'username':'admin','password':'password-123'})
+        v=next(v for v in admin.get('/api/vehicles').json() if v['id']==vid)
+        assert (v['tire_size'],v['fuel_type'],v['oil_spec'])==('205/45 R17','Premium gasoline','0W-20, 4.4 qt')
+        assert admin.get(f'/api/vehicles/{vid}/specs').json()['tire_size']=='205/45 R17'
