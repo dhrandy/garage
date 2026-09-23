@@ -243,7 +243,16 @@ function garage() {
           .filter((m) => m.vehicle_id === v.id)
           .reduce((a, m) => a + m.price, 0),
         totalCost = serviceCost + fuelCost + modCost;
-      return `<button class="vehicle-card card" data-action="open" data-id="${v.id}"><div class="vc-head">${vicon(v)}<div><div class="vc-name">${esc(v.name)}</div><div class="vc-year">${esc(v.year || "Year not set")}${v.private ? " · Private" : ""}</div></div></div><div class="vc-body"><div class="vc-miles"><b>${dist(v.mileage)}</b> ${unit()}</div>${avgMpg != null ? `<div class="hint vc-mpg">${efficiency(avgMpg)} average</div>` : ``}${v.est_mileage > v.mileage ? `<div class="hint">est. current: ${dist(v.est_mileage)} ${unit()}</div>` : ""}<div class="status-line"><span class="dot ${st.state}"></span><span class="status-text ${st.state}">${st.label}</span></div><div class="vc-cost ${totalCost > 0 ? "" : "vc-cost-empty"}">${totalCost > 0 ? `<div><span>Total</span><strong>${money(totalCost)}</strong></div>${serviceCost > 0 ? `<div><span>Service</span><span>${money(serviceCost)}</span></div>` : ""}${fuelCost > 0 ? `<div><span>Fuel</span><span>${money(fuelCost)}</span></div>` : ""}${modCost > 0 ? `<div><span>Mods</span><span>${money(modCost)}</span></div>` : ""}` : ""}</div></div></button>`;
+      return `<button class="vehicle-card card" data-action="open" data-id="${v.id}"><div class="vc-head">${vicon(v)}<div><div class="vc-name">${esc(v.name)}</div><div class="vc-year">${esc(v.year || "Year not set")}${v.private ? " · Private" : ""}</div></div></div><div class="vc-body"><div class="vc-miles"><b>${dist(v.mileage)}</b> ${unit()}</div>${avgMpg != null ? `<div class="hint vc-mpg">${efficiency(avgMpg)} average</div>` : ``}${v.est_mileage > v.mileage ? `<div class="hint">est. current: ${dist(v.est_mileage)} ${unit()}</div>` : ""}<div class="status-line"><span class="dot ${st.state}"></span><span class="status-text ${st.state}">${st.label}</span></div><div class="vc-cost"><div class="vc-cost-row vc-cost-total"><span>Total</span><strong>${money(totalCost)}</strong></div>${[
+        ["Service", serviceCost],
+        ["Fuel", fuelCost],
+        ["Mods", modCost],
+      ]
+        .map(
+          ([label, amount]) =>
+            `<div class="vc-cost-row${amount > 0 ? "" : " vc-cost-zero"}"><span>${label}</span><span>${money(amount)}</span></div>`,
+        )
+        .join("")}</div></div></button>`;
     })
     .join("");
   app.innerHTML = `<h1>${esc(state.settings.garage_name)}</h1><p class="sub">${state.vehicles.length} vehicle${state.vehicles.length === 1 ? "" : "s"}</p>${state.user.is_admin ? `<div class="vehicle-view-toggle"><label class="check-row"><input type="checkbox" data-action="show-all-vehicles" ${state.user.show_all_vehicles ? "checked" : ""}><span>Show all vehicles</span></label><span class="hint">Include private vehicles owned by other users.</span></div>` : ""}<div class="grid">${cards || '<div class="empty">No vehicles visible.</div>'}</div><div style="margin-top:18px"><button class="primary" data-action="add-vehicle">+ Add vehicle</button></div>`;
@@ -446,7 +455,7 @@ function specsForm(v) {
       ["air_filter_part_number", "Air filter part #", ""],
       ["wheel_lug_torque", "Wheel / lug torque", "e.g. 80 lb-ft"],
       ["wheel_size", "Wheel size", "e.g. 15 × 6 in"],
-      ["tire_size", "Tire size", "e.g. 205/45R17"],
+      ["tire_size", "Tire size", "e.g. 215/60R16"],
     ];
   modal(
     `<h2>Edit vehicle specs</h2><form id="specsForm"><div class="specs-form-fields">${fields.map(([k, l, p]) => `<div class="field"><label>${l}</label><input name="${k}" maxlength="160" value="${esc(x[k] || "")}" placeholder="${esc(p)}"></div>`).join("")}</div>${actions()}</form>`,
@@ -1106,3 +1115,8 @@ document.querySelector("#importFile").onchange = async (e) => {
 boot().catch((err) => {
   app.innerHTML = `<div class="auth-panel card"><h1>Garage could not start</h1><p class="error">${esc(err.message)}</p></div>`;
 });
+// Registered here rather than inline so the strict CSP (script-src 'self') allows it.
+if ("serviceWorker" in navigator)
+  window.addEventListener("load", () =>
+    navigator.serviceWorker.register("/static/sw.js"),
+  );
