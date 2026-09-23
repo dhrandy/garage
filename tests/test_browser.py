@@ -115,10 +115,15 @@ def test_menu_tabs_and_responsive_layout(app_url):
                 assert second_box['y'] > first_box['y']
             for label in labels:
                 page.get_by_role('button',name=label,exact=True).click();expect(page.locator('#tabBody')).to_be_visible()
-            page.locator('[data-action=toggle-menu]').click();expect(page.locator('[data-action=settings]')).to_be_visible();page.locator('[data-action=settings]').click()
+            page.locator('[data-action=toggle-menu]').click();expect(page.locator('[data-action=settings]')).to_be_visible()
+            for action in ('settings','users','export','import','logout'):
+                after=page.evaluate("a=>getComputedStyle(document.querySelector(`.menu-panel [data-action=${a}]`),'::after').content",action)
+                assert after in ('none',''),f'menu label duplicated for {action}: {after}'
+            assert page.locator('.menu-panel [data-action=export]').inner_text()=='Export'
+            page.locator('[data-action=settings]').click()
             expect(page.locator('.detail-meta')).to_have_text('Customize this garage')
             page.locator('[data-action=toggle-menu]').click();expect(page.locator('[data-action=users]')).to_be_visible();page.locator('[data-action=users]').click()
-            expect(page.locator('.detail-meta')).to_have_text('Manage access to the shared garage')
+            expect(page.locator('.detail-meta')).to_have_text('Manage access to the garage')
             expect(page.get_by_role('button',name='Refresh data')).to_be_visible()
             assert errors==[]
             page.locator('[data-action=toggle-menu]').click();expect(page.locator('[data-action=logout]')).to_be_visible();page.locator('[data-action=logout]').click()
