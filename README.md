@@ -54,6 +54,8 @@ Settings also has **Vehicle page sections** checkboxes to hide the Service log, 
 
 ## Vehicle specs
 
+On phones, vehicle metadata stays in compact chips and all vehicle tabs remain visible in a two-row navigation grid.
+
 The **Specs** tab groups detailed vehicle information into compact cards for powertrain, body and dimensions, wheels and tires, fuel economy, capability, and maintenance. On wide screens the cards pack into two columns without reserving empty row space; on phones they stack into one column.
 
 ## Maintenance reminders and service logging
