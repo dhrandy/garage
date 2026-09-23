@@ -1,4 +1,4 @@
-const CACHE = "compact-cars-static-v2";
+const CACHE = "garage-static-v3";
 const STATIC = ["/static/manifest.json", "/static/icon.svg"];
 self.addEventListener("install", (event) =>
   event.waitUntil(
