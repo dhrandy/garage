@@ -16,7 +16,16 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, Response, Security, UploadFile
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    Response,
+    Security,
+    UploadFile,
+)
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -28,7 +37,13 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / "garage.db"
 RECEIPTS_DIR = DATA_DIR / "receipts"
 RECEIPTS_DIR.mkdir(parents=True, exist_ok=True)
-RECEIPT_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif", "image/heic": ".heic"}
+RECEIPT_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+    "image/heic": ".heic",
+}
 RECEIPT_MAX_BYTES = 10 * 1024 * 1024
 COOKIE = "garage_session"
 SESSION_DAYS = 30
@@ -45,8 +60,14 @@ _api_calls: dict[str, deque[float]] = defaultdict(deque)
 _api_failures: dict[str, deque[float]] = defaultdict(deque)
 _api_lock = threading.Lock()
 
-app = FastAPI(title="Garage", version="2.0.0", docs_url="/api/docs", openapi_url="/api/openapi.json")
+app = FastAPI(
+    title="Garage",
+    version="2.0.0",
+    docs_url="/api/docs",
+    openapi_url="/api/openapi.json",
+)
 bearer_scheme = HTTPBearer(auto_error=False)
+
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
@@ -68,9 +89,11 @@ async def security_headers(request: Request, call_next):
         )
     return response
 
+
 def client_ip(request: Request) -> str:
     # Uvicorn replaces request.client only when the connecting proxy is trusted.
     return request.client.host if request.client else "unknown"
+
 
 def login_retry_after(ip: str) -> int:
     now = time.monotonic()
@@ -78,15 +101,22 @@ def login_retry_after(ip: str) -> int:
         failures = _login_failures[ip]
         while failures and now - failures[0] >= LOGIN_WINDOW_SECONDS:
             failures.popleft()
-        return max(0, int(LOGIN_WINDOW_SECONDS - (now - failures[0])) + 1) if len(failures) >= LOGIN_LIMIT else 0
+        return (
+            max(0, int(LOGIN_WINDOW_SECONDS - (now - failures[0])) + 1)
+            if len(failures) >= LOGIN_LIMIT
+            else 0
+        )
+
 
 def record_login_failure(ip: str) -> None:
     with _login_lock:
         _login_failures[ip].append(time.monotonic())
 
+
 def clear_login_failures(ip: str) -> None:
     with _login_lock:
         _login_failures.pop(ip, None)
+
 
 def _window_allows(hits: deque[float], limit: int, window: int, count: bool) -> int:
     now = time.monotonic()
@@ -98,17 +128,25 @@ def _window_allows(hits: deque[float], limit: int, window: int, count: bool) -> 
         hits.append(now)
     return 0
 
+
 def api_call_allowed(token_hash: str) -> int:
     with _api_lock:
-        return _window_allows(_api_calls[token_hash], API_LIMIT, API_WINDOW_SECONDS, True)
+        return _window_allows(
+            _api_calls[token_hash], API_LIMIT, API_WINDOW_SECONDS, True
+        )
+
 
 def api_failure_retry_after(ip: str) -> int:
     with _api_lock:
-        return _window_allows(_api_failures[ip], API_FAIL_LIMIT, API_FAIL_WINDOW_SECONDS, False)
+        return _window_allows(
+            _api_failures[ip], API_FAIL_LIMIT, API_FAIL_WINDOW_SECONDS, False
+        )
+
 
 def record_api_failure(ip: str) -> None:
     with _api_lock:
         _api_failures[ip].append(time.monotonic())
+
 
 @contextmanager
 def db():
@@ -122,8 +160,10 @@ def db():
     finally:
         conn.close()
 
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
 
 def init_db():
     fresh_install = not DB_PATH.exists()
@@ -290,39 +330,85 @@ def init_db():
         """)
         user_columns = {r["name"] for r in c.execute("PRAGMA table_info(users)")}
         if "show_all_vehicles" not in user_columns:
-            c.execute("ALTER TABLE users ADD COLUMN show_all_vehicles INTEGER NOT NULL DEFAULT 0")
+            c.execute(
+                "ALTER TABLE users ADD COLUMN show_all_vehicles INTEGER NOT NULL DEFAULT 0"
+            )
         vehicle_columns = {r["name"] for r in c.execute("PRAGMA table_info(vehicles)")}
         if "owner_id" not in vehicle_columns:
-            c.execute("ALTER TABLE vehicles ADD COLUMN owner_id INTEGER REFERENCES users(id)")
+            c.execute(
+                "ALTER TABLE vehicles ADD COLUMN owner_id INTEGER REFERENCES users(id)"
+            )
         if "private" not in vehicle_columns:
-            c.execute("ALTER TABLE vehicles ADD COLUMN private INTEGER NOT NULL DEFAULT 0")
-        for col in ("fuel_type","tire_size","oil_spec"):
-            if col not in vehicle_columns: c.execute(f"ALTER TABLE vehicles ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
-        spec_columns={r["name"] for r in c.execute("PRAGMA table_info(vehicle_specs)")}
+            c.execute(
+                "ALTER TABLE vehicles ADD COLUMN private INTEGER NOT NULL DEFAULT 0"
+            )
+        for col in ("fuel_type", "tire_size", "oil_spec"):
+            if col not in vehicle_columns:
+                c.execute(
+                    f"ALTER TABLE vehicles ADD COLUMN {col} TEXT NOT NULL DEFAULT ''"
+                )
+        spec_columns = {
+            r["name"] for r in c.execute("PRAGMA table_info(vehicle_specs)")
+        }
         for col in SPEC_FIELDS:
-            if col not in spec_columns: c.execute(f"ALTER TABLE vehicle_specs ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
-        mod_columns={r["name"] for r in c.execute("PRAGMA table_info(modifications)")}
-        for col in ("torque_specs","fluids","gotchas","youtube_url"):
-            if col not in mod_columns: c.execute(f"ALTER TABLE modifications ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
-        admin = c.execute("SELECT id FROM users WHERE is_admin=1 ORDER BY id LIMIT 1").fetchone()
-        if admin:
-            c.execute("UPDATE vehicles SET owner_id=? WHERE owner_id IS NULL", (admin["id"],))
-        reminder_columns={r["name"] for r in c.execute("PRAGMA table_info(reminders)")}
-        if "due_date" not in reminder_columns: c.execute("ALTER TABLE reminders ADD COLUMN due_date TEXT")
-        if "repeats_yearly" not in reminder_columns: c.execute("ALTER TABLE reminders ADD COLUMN repeats_yearly INTEGER NOT NULL DEFAULT 0")
-        fuel_columns={r["name"] for r in c.execute("PRAGMA table_info(fuel_entries)")}
-        if "octane" not in fuel_columns: c.execute("ALTER TABLE fuel_entries ADD COLUMN octane TEXT NOT NULL DEFAULT ''")
-        if "reminder_id" not in {r["name"] for r in c.execute("PRAGMA table_info(services)")}:
-            c.execute("ALTER TABLE services ADD COLUMN reminder_id INTEGER REFERENCES reminders(id)")
-        service_columns={r["name"] for r in c.execute("PRAGMA table_info(services)")}
+            if col not in spec_columns:
+                c.execute(
+                    f"ALTER TABLE vehicle_specs ADD COLUMN {col} TEXT NOT NULL DEFAULT ''"
+                )
+        mod_columns = {r["name"] for r in c.execute("PRAGMA table_info(modifications)")}
         for col in ("torque_specs", "fluids", "gotchas", "youtube_url"):
-            if col not in service_columns: c.execute(f"ALTER TABLE services ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
-        if "photo_receipt_id" not in {r["name"] for r in c.execute("PRAGMA table_info(vehicles)")}:
-            c.execute("ALTER TABLE vehicles ADD COLUMN photo_receipt_id INTEGER REFERENCES receipts(id)")
+            if col not in mod_columns:
+                c.execute(
+                    f"ALTER TABLE modifications ADD COLUMN {col} TEXT NOT NULL DEFAULT ''"
+                )
+        admin = c.execute(
+            "SELECT id FROM users WHERE is_admin=1 ORDER BY id LIMIT 1"
+        ).fetchone()
+        if admin:
+            c.execute(
+                "UPDATE vehicles SET owner_id=? WHERE owner_id IS NULL", (admin["id"],)
+            )
+        reminder_columns = {
+            r["name"] for r in c.execute("PRAGMA table_info(reminders)")
+        }
+        if "due_date" not in reminder_columns:
+            c.execute("ALTER TABLE reminders ADD COLUMN due_date TEXT")
+        if "repeats_yearly" not in reminder_columns:
+            c.execute(
+                "ALTER TABLE reminders ADD COLUMN repeats_yearly INTEGER NOT NULL DEFAULT 0"
+            )
+        fuel_columns = {r["name"] for r in c.execute("PRAGMA table_info(fuel_entries)")}
+        if "octane" not in fuel_columns:
+            c.execute(
+                "ALTER TABLE fuel_entries ADD COLUMN octane TEXT NOT NULL DEFAULT ''"
+            )
+        if "reminder_id" not in {
+            r["name"] for r in c.execute("PRAGMA table_info(services)")
+        }:
+            c.execute(
+                "ALTER TABLE services ADD COLUMN reminder_id INTEGER REFERENCES reminders(id)"
+            )
+        service_columns = {r["name"] for r in c.execute("PRAGMA table_info(services)")}
+        for col in ("torque_specs", "fluids", "gotchas", "youtube_url"):
+            if col not in service_columns:
+                c.execute(
+                    f"ALTER TABLE services ADD COLUMN {col} TEXT NOT NULL DEFAULT ''"
+                )
+        if "photo_receipt_id" not in {
+            r["name"] for r in c.execute("PRAGMA table_info(vehicles)")
+        }:
+            c.execute(
+                "ALTER TABLE vehicles ADD COLUMN photo_receipt_id INTEGER REFERENCES receipts(id)"
+            )
         migrate_header_fields(c)
-        c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", ("garage_name", "Your Garage"))
+        c.execute(
+            "INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)",
+            ("garage_name", "Your Garage"),
+        )
         for key in SETTINGS_KEYS[1:]:
-            c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (key, "0"))
+            c.execute(
+                "INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (key, "0")
+            )
         if fresh_install:
             stamp = now_iso()
             c.execute(
@@ -330,17 +416,27 @@ def init_db():
                 ("Ford Mustang", "1969", 0, "🚗", None, stamp, stamp),
             )
 
+
 @app.on_event("startup")
 def startup():
     init_db()
     if os.getenv("GARAGE_NOTIFY_WORKER", "true").lower() == "true":
         threading.Thread(target=notification_worker, daemon=True).start()
 
+
 def clean_username(value: str) -> str:
     value = value.strip()
-    if len(value) < 3 or len(value) > 40 or not all(ch.isalnum() or ch in "._-" for ch in value):
-        raise HTTPException(400, "Username must be 3-40 characters using letters, numbers, dots, dashes, or underscores")
+    if (
+        len(value) < 3
+        or len(value) > 40
+        or not all(ch.isalnum() or ch in "._-" for ch in value)
+    ):
+        raise HTTPException(
+            400,
+            "Username must be 3-40 characters using letters, numbers, dots, dashes, or underscores",
+        )
     return value
+
 
 def password_record(password: str, salt_hex: str | None = None) -> tuple[str, str]:
     if len(password) < 8:
@@ -349,12 +445,21 @@ def password_record(password: str, salt_hex: str | None = None) -> tuple[str, st
     digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, PBKDF2_ITERATIONS)
     return digest.hex(), salt.hex()
 
+
 def verify_password(password: str, expected: str, salt: str) -> bool:
     digest, _ = password_record(password, salt)
     return hmac.compare_digest(digest, expected)
 
+
 def public_user(row: sqlite3.Row) -> dict[str, Any]:
-    return {"id": row["id"], "username": row["username"], "is_admin": bool(row["is_admin"]), "active": bool(row["active"]), "show_all_vehicles": bool(row["show_all_vehicles"])}
+    return {
+        "id": row["id"],
+        "username": row["username"],
+        "is_admin": bool(row["is_admin"]),
+        "active": bool(row["active"]),
+        "show_all_vehicles": bool(row["show_all_vehicles"]),
+    }
+
 
 def current_user(request: Request, admin: bool = False) -> sqlite3.Row:
     token = request.cookies.get(COOKIE)
@@ -362,50 +467,90 @@ def current_user(request: Request, admin: bool = False) -> sqlite3.Row:
         raise HTTPException(401, "Not signed in")
     token_hash = hashlib.sha256(token.encode()).hexdigest()
     with db() as c:
-        row = c.execute("""SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id
-          WHERE s.token_hash=? AND s.expires_at>? AND u.active=1""", (token_hash, now_iso())).fetchone()
+        row = c.execute(
+            """SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id
+          WHERE s.token_hash=? AND s.expires_at>? AND u.active=1""",
+            (token_hash, now_iso()),
+        ).fetchone()
     if not row:
         raise HTTPException(401, "Session expired")
     if admin and not row["is_admin"]:
         raise HTTPException(403, "Administrator access required")
     return row
 
+
 def set_session(response: Response, user_id: int):
     raw = secrets.token_urlsafe(32)
     expires = datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)
     with db() as c:
         c.execute("DELETE FROM sessions WHERE expires_at<=?", (now_iso(),))
-        c.execute("INSERT INTO sessions(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)",
-                  (hashlib.sha256(raw.encode()).hexdigest(), user_id, expires.isoformat(), now_iso()))
-    response.set_cookie(COOKIE, raw, max_age=SESSION_DAYS*86400, httponly=True, samesite="strict",
-                        secure=os.getenv("GARAGE_COOKIE_SECURE", "false").lower() == "true", path="/")
+        c.execute(
+            "INSERT INTO sessions(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)",
+            (
+                hashlib.sha256(raw.encode()).hexdigest(),
+                user_id,
+                expires.isoformat(),
+                now_iso(),
+            ),
+        )
+    response.set_cookie(
+        COOKIE,
+        raw,
+        max_age=SESSION_DAYS * 86400,
+        httponly=True,
+        samesite="strict",
+        secure=os.getenv("GARAGE_COOKIE_SECURE", "false").lower() == "true",
+        path="/",
+    )
+
 
 def vehicle_accessible(row: sqlite3.Row, user: sqlite3.Row) -> bool:
     if not user["is_admin"]:
         return row["owner_id"] == user["id"]
-    return bool(not row["private"] or row["owner_id"] == user["id"] or user["show_all_vehicles"])
+    return bool(
+        not row["private"] or row["owner_id"] == user["id"] or user["show_all_vehicles"]
+    )
 
-def get_visible_vehicle(c: sqlite3.Connection, vehicle_id: int, user: sqlite3.Row) -> sqlite3.Row:
+
+def get_visible_vehicle(
+    c: sqlite3.Connection, vehicle_id: int, user: sqlite3.Row
+) -> sqlite3.Row:
     row = c.execute("SELECT * FROM vehicles WHERE id=?", (vehicle_id,)).fetchone()
     if not row or not vehicle_accessible(row, user):
         raise HTTPException(404, "Vehicle not found")
     return row
 
+
 def can_edit_vehicle(row: sqlite3.Row, user: sqlite3.Row) -> bool:
-    return bool(user["is_admin"] or (row["owner_id"] is not None and row["owner_id"] == user["id"]))
+    return bool(
+        user["is_admin"]
+        or (row["owner_id"] is not None and row["owner_id"] == user["id"])
+    )
+
 
 def require_vehicle_edit(row: sqlite3.Row, user: sqlite3.Row) -> None:
     if not can_edit_vehicle(row, user):
-        raise HTTPException(403, "Only the owner or an administrator can edit this vehicle")
+        raise HTTPException(
+            403, "Only the owner or an administrator can edit this vehicle"
+        )
+
 
 def visible_vehicle_ids(c: sqlite3.Connection, user: sqlite3.Row) -> set[int]:
-    return {r["id"] for r in c.execute("SELECT * FROM vehicles") if vehicle_accessible(r, user)}
+    return {
+        r["id"]
+        for r in c.execute("SELECT * FROM vehicles")
+        if vehicle_accessible(r, user)
+    }
+
 
 def token_user(c: sqlite3.Connection, token: sqlite3.Row) -> sqlite3.Row:
-    row = c.execute("SELECT * FROM users WHERE id=? AND active=1", (token["created_by"],)).fetchone()
+    row = c.execute(
+        "SELECT * FROM users WHERE id=? AND active=1", (token["created_by"],)
+    ).fetchone()
     if not row:
         raise HTTPException(403, "Token owner is inactive")
     return row
+
 
 def display_user(c: sqlite3.Connection, user_id: int | None) -> str:
     if user_id is None:
@@ -413,9 +558,11 @@ def display_user(c: sqlite3.Connection, user_id: int | None) -> str:
     row = c.execute("SELECT username FROM users WHERE id=?", (user_id,)).fetchone()
     return row[0] if row else "Former user"
 
+
 class Credentials(BaseModel):
     username: str
     password: str
+
 
 class VehicleIn(BaseModel):
     name: str = Field(min_length=1, max_length=80)
@@ -430,7 +577,39 @@ class VehicleIn(BaseModel):
     tire_size: str | None = Field(default=None, max_length=80)
     oil_spec: str | None = Field(default=None, max_length=160)
 
-SPEC_FIELDS = ("engine","displacement","transmission","drivetrain","body_style","exterior_color","vin","horsepower","torque","curb_weight","wheelbase","dimensions","fuel_capacity","towing_capacity","payload","mpg_city","mpg_highway","oil_type","oil_capacity","battery_group","spark_plugs","wiper_sizes","coolant_type","brake_fluid","air_filter_part_number","wheel_lug_torque","wheel_size","tire_size","fuel_type")
+
+SPEC_FIELDS = (
+    "engine",
+    "displacement",
+    "transmission",
+    "drivetrain",
+    "body_style",
+    "exterior_color",
+    "vin",
+    "horsepower",
+    "torque",
+    "curb_weight",
+    "wheelbase",
+    "dimensions",
+    "fuel_capacity",
+    "towing_capacity",
+    "payload",
+    "mpg_city",
+    "mpg_highway",
+    "oil_type",
+    "oil_capacity",
+    "battery_group",
+    "spark_plugs",
+    "wiper_sizes",
+    "coolant_type",
+    "brake_fluid",
+    "air_filter_part_number",
+    "wheel_lug_torque",
+    "wheel_size",
+    "tire_size",
+    "fuel_type",
+)
+
 
 class VehicleSpecsIn(BaseModel):
     engine: str = Field(default="", max_length=160)
@@ -465,6 +644,7 @@ class VehicleSpecsIn(BaseModel):
     tire_size: str | None = Field(default=None, max_length=80)
     fuel_type: str | None = Field(default=None, max_length=80)
 
+
 class ServiceIn(BaseModel):
     vehicle_id: int
     date: str | None = None
@@ -479,6 +659,7 @@ class ServiceIn(BaseModel):
     youtube_url: str = Field(default="", max_length=500)
     reminder_id: int | None = None
 
+
 class FuelIn(BaseModel):
     vehicle_id: int
     date: str
@@ -486,6 +667,7 @@ class FuelIn(BaseModel):
     gallons: float = Field(gt=0)
     cost: float = Field(default=0, ge=0)
     octane: str = Field(default="", max_length=20)
+
 
 class ReminderIn(BaseModel):
     vehicle_id: int
@@ -497,7 +679,17 @@ class ReminderIn(BaseModel):
     due_date: str | None = None
     repeats_yearly: bool = False
 
-SETTINGS_KEYS = ("garage_name", "hide_maintenance", "hide_costs", "hide_fuel", "hide_notes", "use_vehicle_photos", "use_kilometers")
+
+SETTINGS_KEYS = (
+    "garage_name",
+    "hide_maintenance",
+    "hide_costs",
+    "hide_fuel",
+    "hide_notes",
+    "use_vehicle_photos",
+    "use_kilometers",
+)
+
 
 def read_settings(c) -> dict[str, Any]:
     data = {r["key"]: r["value"] for r in c.execute("SELECT key,value FROM settings")}
@@ -505,6 +697,7 @@ def read_settings(c) -> dict[str, Any]:
     for key in SETTINGS_KEYS[1:]:
         out[key] = data.get(key, "0") == "1"
     return out
+
 
 class SettingsIn(BaseModel):
     garage_name: str | None = Field(default=None, max_length=80)
@@ -515,10 +708,12 @@ class SettingsIn(BaseModel):
     use_vehicle_photos: bool | None = None
     use_kilometers: bool | None = None
 
+
 class UserCreate(BaseModel):
     username: str
     password: str
     is_admin: bool = False
+
 
 class UserUpdate(BaseModel):
     username: str | None = None
@@ -526,11 +721,13 @@ class UserUpdate(BaseModel):
     is_admin: bool | None = None
     active: bool | None = None
 
+
 @app.get("/api/status")
 def status():
     with db() as c:
         setup_required = c.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
     return {"setup_required": setup_required}
+
 
 @app.post("/api/setup")
 def setup(body: Credentials, response: Response):
@@ -539,120 +736,245 @@ def setup(body: Credentials, response: Response):
     with db() as c:
         if c.execute("SELECT COUNT(*) FROM users").fetchone()[0]:
             raise HTTPException(409, "Setup is already complete")
-        cur = c.execute("INSERT INTO users(username,password_hash,salt,is_admin,active,created_at) VALUES(?,?,?,1,1,?)",
-                        (username,pw,salt,now_iso()))
+        cur = c.execute(
+            "INSERT INTO users(username,password_hash,salt,is_admin,active,created_at) VALUES(?,?,?,1,1,?)",
+            (username, pw, salt, now_iso()),
+        )
         uid = cur.lastrowid
-        c.execute("UPDATE vehicles SET owner_id=? WHERE owner_id IS NULL",(uid,))
+        c.execute("UPDATE vehicles SET owner_id=? WHERE owner_id IS NULL", (uid,))
     set_session(response, uid)
     return {"ok": True}
+
 
 @app.post("/api/login")
 def login(body: Credentials, request: Request, response: Response):
     ip = client_ip(request)
     retry_after = login_retry_after(ip)
     if retry_after:
-        raise HTTPException(429, "Too many login attempts. Try again later.", headers={"Retry-After": str(retry_after)})
+        raise HTTPException(
+            429,
+            "Too many login attempts. Try again later.",
+            headers={"Retry-After": str(retry_after)},
+        )
     with db() as c:
-        row = c.execute("SELECT * FROM users WHERE username=? COLLATE NOCASE", (body.username.strip(),)).fetchone()
-    if not row or not row["active"] or not verify_password(body.password, row["password_hash"], row["salt"]):
+        row = c.execute(
+            "SELECT * FROM users WHERE username=? COLLATE NOCASE",
+            (body.username.strip(),),
+        ).fetchone()
+    if (
+        not row
+        or not row["active"]
+        or not verify_password(body.password, row["password_hash"], row["salt"])
+    ):
         record_login_failure(ip)
         raise HTTPException(401, "Invalid username or password")
     clear_login_failures(ip)
     set_session(response, row["id"])
     return {"user": public_user(row)}
 
+
 @app.post("/api/logout")
 def logout(request: Request, response: Response):
     token = request.cookies.get(COOKIE)
     if token:
-        with db() as c: c.execute("DELETE FROM sessions WHERE token_hash=?", (hashlib.sha256(token.encode()).hexdigest(),))
+        with db() as c:
+            c.execute(
+                "DELETE FROM sessions WHERE token_hash=?",
+                (hashlib.sha256(token.encode()).hexdigest(),),
+            )
     response.delete_cookie(COOKIE, path="/")
     return {"ok": True}
+
 
 @app.get("/api/me")
 def me(request: Request):
     return public_user(current_user(request))
 
+
 class VehicleViewIn(BaseModel):
     show_all: bool
 
+
 @app.put("/api/me/vehicle-view")
 def set_vehicle_view(body: VehicleViewIn, request: Request):
-    user=current_user(request, True)
+    user = current_user(request, True)
     with db() as c:
-        c.execute("UPDATE users SET show_all_vehicles=? WHERE id=?",(int(body.show_all),user["id"]))
-        return public_user(c.execute("SELECT * FROM users WHERE id=?",(user["id"],)).fetchone())
+        c.execute(
+            "UPDATE users SET show_all_vehicles=? WHERE id=?",
+            (int(body.show_all), user["id"]),
+        )
+        return public_user(
+            c.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
+        )
+
 
 def mileage_estimate(c, vehicle_id: int, today: date | None = None) -> dict[str, Any]:
     today = today or datetime.now(timezone.utc).date()
-    points = [(r["service_date"], r["mileage"]) for r in c.execute("SELECT service_date,mileage FROM services WHERE vehicle_id=? AND mileage>0 AND service_date<>''", (vehicle_id,))]
-    points += [(r["fill_date"], r["odometer"]) for r in c.execute("SELECT fill_date,odometer FROM fuel_entries WHERE vehicle_id=? AND odometer>0", (vehicle_id,))]
+    points = [
+        (r["service_date"], r["mileage"])
+        for r in c.execute(
+            "SELECT service_date,mileage FROM services WHERE vehicle_id=? AND mileage>0 AND service_date<>''",
+            (vehicle_id,),
+        )
+    ]
+    points += [
+        (r["fill_date"], r["odometer"])
+        for r in c.execute(
+            "SELECT fill_date,odometer FROM fuel_entries WHERE vehicle_id=? AND odometer>0",
+            (vehicle_id,),
+        )
+    ]
     points = sorted(set(points))
     if not points:
         return {"est_mileage": None, "miles_per_day": None}
     first_date, first_odo = points[0]
     last_date, last_odo = points[-1]
     rate = None
-    days = (datetime.strptime(last_date, "%Y-%m-%d").date() - datetime.strptime(first_date, "%Y-%m-%d").date()).days
+    days = (
+        datetime.strptime(last_date, "%Y-%m-%d").date()
+        - datetime.strptime(first_date, "%Y-%m-%d").date()
+    ).days
     if len(points) >= 2 and days >= 7 and last_odo > first_odo:
         rate = (last_odo - first_odo) / days
     est = last_odo
     if rate:
         days_since = (today - datetime.strptime(last_date, "%Y-%m-%d").date()).days
         est = last_odo + rate * max(0, days_since)
-    return {"est_mileage": round(est), "miles_per_day": round(rate, 1) if rate is not None else None}
+    return {
+        "est_mileage": round(est),
+        "miles_per_day": round(rate, 1) if rate is not None else None,
+    }
+
 
 def effective_mileage(c, vehicle_row) -> int:
     est = mileage_estimate(c, vehicle_row["id"])["est_mileage"]
     return max(vehicle_row["mileage"], est or 0)
 
+
 def vehicle_dict(c, row):
     est = mileage_estimate(c, row["id"])
-    return {"id":row["id"],"name":row["name"],"year":row["year"],"mileage":row["mileage"],"icon":row["icon"],
-            "est_mileage":est["est_mileage"],"miles_per_day":est["miles_per_day"],"photo_receipt_id":row["photo_receipt_id"],
-            "photo_url":f"/api/receipts/{row['photo_receipt_id']}" if row["photo_receipt_id"] else None,
-            "added_by":display_user(c,row["added_by"]) or "System", "owner_id":row["owner_id"], "owner":display_user(c,row["owner_id"]) or "System", "private":bool(row["private"]), **header_specs(c,row["id"]),
-            "mileage_updated_by": (lambda r: display_user(c, r["recorded_by"]) if r else "")(c.execute("SELECT recorded_by FROM mileage_updates WHERE vehicle_id=? ORDER BY id DESC LIMIT 1", (row["id"],)).fetchone()),
-            "created_at":row["created_at"],"updated_at":row["updated_at"]}
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "year": row["year"],
+        "mileage": row["mileage"],
+        "icon": row["icon"],
+        "est_mileage": est["est_mileage"],
+        "miles_per_day": est["miles_per_day"],
+        "photo_receipt_id": row["photo_receipt_id"],
+        "photo_url": (
+            f"/api/receipts/{row['photo_receipt_id']}"
+            if row["photo_receipt_id"]
+            else None
+        ),
+        "added_by": display_user(c, row["added_by"]) or "System",
+        "owner_id": row["owner_id"],
+        "owner": display_user(c, row["owner_id"]) or "System",
+        "private": bool(row["private"]),
+        **header_specs(c, row["id"]),
+        "mileage_updated_by": (
+            lambda r: display_user(c, r["recorded_by"]) if r else ""
+        )(
+            c.execute(
+                "SELECT recorded_by FROM mileage_updates WHERE vehicle_id=? ORDER BY id DESC LIMIT 1",
+                (row["id"],),
+            ).fetchone()
+        ),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
 
 @app.get("/api/vehicles")
 def list_vehicles(request: Request):
-    user=current_user(request)
-    with db() as c: return [vehicle_dict(c,r) for r in c.execute("SELECT * FROM vehicles ORDER BY id") if vehicle_accessible(r,user)]
+    user = current_user(request)
+    with db() as c:
+        return [
+            vehicle_dict(c, r)
+            for r in c.execute("SELECT * FROM vehicles ORDER BY id")
+            if vehicle_accessible(r, user)
+        ]
+
 
 @app.post("/api/vehicles")
 def add_vehicle(body: VehicleIn, request: Request):
-    user=current_user(request); stamp=now_iso()
+    user = current_user(request)
+    stamp = now_iso()
     with db() as c:
-        owner_id=body.owner_id if user["is_admin"] and body.owner_id else user["id"]
-        if not c.execute("SELECT 1 FROM users WHERE id=? AND active=1",(owner_id,)).fetchone(): raise HTTPException(400,"Owner not found")
-        cur=c.execute("INSERT INTO vehicles(name,year,mileage,icon,added_by,owner_id,private,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                      (body.name.strip(),body.year.strip(),body.mileage,body.icon,user["id"],owner_id,int(body.private),stamp,stamp))
-        write_header_specs(c,cur.lastrowid,body)
-        row=c.execute("SELECT * FROM vehicles WHERE id=?",(cur.lastrowid,)).fetchone(); return vehicle_dict(c,row)
+        owner_id = body.owner_id if user["is_admin"] and body.owner_id else user["id"]
+        if not c.execute(
+            "SELECT 1 FROM users WHERE id=? AND active=1", (owner_id,)
+        ).fetchone():
+            raise HTTPException(400, "Owner not found")
+        cur = c.execute(
+            "INSERT INTO vehicles(name,year,mileage,icon,added_by,owner_id,private,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+            (
+                body.name.strip(),
+                body.year.strip(),
+                body.mileage,
+                body.icon,
+                user["id"],
+                owner_id,
+                int(body.private),
+                stamp,
+                stamp,
+            ),
+        )
+        write_header_specs(c, cur.lastrowid, body)
+        row = c.execute(
+            "SELECT * FROM vehicles WHERE id=?", (cur.lastrowid,)
+        ).fetchone()
+        return vehicle_dict(c, row)
+
 
 @app.put("/api/vehicles/{item_id}")
-def update_vehicle(item_id:int, body:VehicleIn, request:Request):
-    user=current_user(request); stamp=now_iso()
+def update_vehicle(item_id: int, body: VehicleIn, request: Request):
+    user = current_user(request)
+    stamp = now_iso()
     with db() as c:
-        old=get_visible_vehicle(c,item_id,user)
+        old = get_visible_vehicle(c, item_id, user)
         require_vehicle_edit(old, user)
-        owner_id=body.owner_id if user["is_admin"] and body.owner_id else old["owner_id"] or user["id"]
-        cur=c.execute("UPDATE vehicles SET name=?,year=?,mileage=?,icon=?,owner_id=?,private=?,updated_at=? WHERE id=?",
-                      (body.name.strip(),body.year.strip(),body.mileage,body.icon,owner_id,int(body.private),stamp,item_id))
-        write_header_specs(c,item_id,body)
+        owner_id = (
+            body.owner_id
+            if user["is_admin"] and body.owner_id
+            else old["owner_id"] or user["id"]
+        )
+        cur = c.execute(
+            "UPDATE vehicles SET name=?,year=?,mileage=?,icon=?,owner_id=?,private=?,updated_at=? WHERE id=?",
+            (
+                body.name.strip(),
+                body.year.strip(),
+                body.mileage,
+                body.icon,
+                owner_id,
+                int(body.private),
+                stamp,
+                item_id,
+            ),
+        )
+        write_header_specs(c, item_id, body)
         if body.mileage != old["mileage"]:
-            c.execute("INSERT INTO mileage_updates(vehicle_id,mileage,recorded_by,recorded_at) VALUES(?,?,?,?)",
-                      (item_id,body.mileage,user["id"],stamp))
-        if not cur.rowcount: raise HTTPException(404,"Vehicle not found")
-        return vehicle_dict(c,c.execute("SELECT * FROM vehicles WHERE id=?",(item_id,)).fetchone())
+            c.execute(
+                "INSERT INTO mileage_updates(vehicle_id,mileage,recorded_by,recorded_at) VALUES(?,?,?,?)",
+                (item_id, body.mileage, user["id"], stamp),
+            )
+        if not cur.rowcount:
+            raise HTTPException(404, "Vehicle not found")
+        return vehicle_dict(
+            c, c.execute("SELECT * FROM vehicles WHERE id=?", (item_id,)).fetchone()
+        )
+
 
 @app.post("/api/vehicles/{item_id}/photo", status_code=201)
-async def upload_vehicle_photo(item_id: int, request: Request, file: UploadFile = File(...)):
+async def upload_vehicle_photo(
+    item_id: int, request: Request, file: UploadFile = File(...)
+):
     user = current_user(request)
     mime = (file.content_type or "").lower()
     if mime not in RECEIPT_TYPES:
-        raise HTTPException(400, "Vehicle photos must be JPEG, PNG, WebP, GIF, or HEIC images")
+        raise HTTPException(
+            400, "Vehicle photos must be JPEG, PNG, WebP, GIF, or HEIC images"
+        )
     data = await file.read()
     if not data:
         raise HTTPException(400, "Empty file")
@@ -662,98 +984,199 @@ async def upload_vehicle_photo(item_id: int, request: Request, file: UploadFile 
         v = get_visible_vehicle(c, item_id, user)
         require_vehicle_edit(v, user)
         if v["photo_receipt_id"]:
-            old_photo = c.execute("SELECT * FROM receipts WHERE id=?", (v["photo_receipt_id"],)).fetchone()
+            old_photo = c.execute(
+                "SELECT * FROM receipts WHERE id=?", (v["photo_receipt_id"],)
+            ).fetchone()
             if old_photo:
                 (RECEIPTS_DIR / old_photo["stored_name"]).unlink(missing_ok=True)
-                c.execute("UPDATE vehicles SET photo_receipt_id=NULL WHERE id=?", (item_id,))
+                c.execute(
+                    "UPDATE vehicles SET photo_receipt_id=NULL WHERE id=?", (item_id,)
+                )
                 c.execute("DELETE FROM receipts WHERE id=?", (old_photo["id"],))
         stored = f"{secrets.token_hex(16)}{RECEIPT_TYPES[mime]}"
         (RECEIPTS_DIR / stored).write_bytes(data)
-        cur = c.execute("INSERT INTO receipts(kind,entry_id,stored_name,orig_name,mime,size,uploaded_by,created_at) VALUES('vehicle',?,?,?,?,?,?,?)",
-                        (item_id, stored, (file.filename or "")[:120], mime, len(data), user["id"], now_iso()))
+        cur = c.execute(
+            "INSERT INTO receipts(kind,entry_id,stored_name,orig_name,mime,size,uploaded_by,created_at) VALUES('vehicle',?,?,?,?,?,?,?)",
+            (
+                item_id,
+                stored,
+                (file.filename or "")[:120],
+                mime,
+                len(data),
+                user["id"],
+                now_iso(),
+            ),
+        )
         photo_id = cur.lastrowid
-        c.execute("UPDATE vehicles SET photo_receipt_id=?,updated_at=? WHERE id=?", (photo_id, now_iso(), item_id))
-        return receipt_dict(c, c.execute("SELECT * FROM receipts WHERE id=?", (photo_id,)).fetchone())
+        c.execute(
+            "UPDATE vehicles SET photo_receipt_id=?,updated_at=? WHERE id=?",
+            (photo_id, now_iso(), item_id),
+        )
+        return receipt_dict(
+            c, c.execute("SELECT * FROM receipts WHERE id=?", (photo_id,)).fetchone()
+        )
+
 
 @app.delete("/api/vehicles/{item_id}")
-def delete_vehicle(item_id:int, request:Request):
-    user=current_user(request)
+def delete_vehicle(item_id: int, request: Request):
+    user = current_user(request)
     with db() as c:
-        v=get_visible_vehicle(c,item_id,user)
+        v = get_visible_vehicle(c, item_id, user)
         require_vehicle_edit(v, user)
-        service_ids=[r["id"] for r in c.execute("SELECT id FROM services WHERE vehicle_id=?",(item_id,))]
-        fuel_ids=[r["id"] for r in c.execute("SELECT id FROM fuel_entries WHERE vehicle_id=?",(item_id,))]
-        for sid in service_ids: delete_receipt_files(c, "service", sid)
-        for fid in fuel_ids: delete_receipt_files(c, "fuel", fid)
+        service_ids = [
+            r["id"]
+            for r in c.execute("SELECT id FROM services WHERE vehicle_id=?", (item_id,))
+        ]
+        fuel_ids = [
+            r["id"]
+            for r in c.execute(
+                "SELECT id FROM fuel_entries WHERE vehicle_id=?", (item_id,)
+            )
+        ]
+        for sid in service_ids:
+            delete_receipt_files(c, "service", sid)
+        for fid in fuel_ids:
+            delete_receipt_files(c, "fuel", fid)
         delete_receipt_files(c, "vehicle", item_id)
-        if not c.execute("DELETE FROM vehicles WHERE id=?",(item_id,)).rowcount: raise HTTPException(404,"Vehicle not found")
-    return {"ok":True}
+        if not c.execute("DELETE FROM vehicles WHERE id=?", (item_id,)).rowcount:
+            raise HTTPException(404, "Vehicle not found")
+    return {"ok": True}
 
-def update_vehicle_mileage(c, vehicle_id: int, mileage: int, user_id: int | None, stamp: str) -> None:
+
+def update_vehicle_mileage(
+    c, vehicle_id: int, mileage: int, user_id: int | None, stamp: str
+) -> None:
     row = c.execute("SELECT mileage FROM vehicles WHERE id=?", (vehicle_id,)).fetchone()
     if row and mileage > row["mileage"]:
-        c.execute("UPDATE vehicles SET mileage=?,updated_at=? WHERE id=?", (mileage, stamp, vehicle_id))
-        c.execute("INSERT INTO mileage_updates(vehicle_id,mileage,recorded_by,recorded_at) VALUES(?,?,?,?)",
-                  (vehicle_id, mileage, user_id, stamp))
+        c.execute(
+            "UPDATE vehicles SET mileage=?,updated_at=? WHERE id=?",
+            (mileage, stamp, vehicle_id),
+        )
+        c.execute(
+            "INSERT INTO mileage_updates(vehicle_id,mileage,recorded_by,recorded_at) VALUES(?,?,?,?)",
+            (vehicle_id, mileage, user_id, stamp),
+        )
 
-def apply_reminder_reset(c, vehicle_id: int, reminder_id: int | None, service_date: str | None, mileage: int) -> int | None:
+
+def apply_reminder_reset(
+    c, vehicle_id: int, reminder_id: int | None, service_date: str | None, mileage: int
+) -> int | None:
     if reminder_id is None or not service_date:
         return None
-    cur = c.execute("UPDATE reminders SET last_date=?,last_mileage=?,updated_at=? WHERE id=? AND vehicle_id=?",
-                    (service_date, mileage, now_iso(), reminder_id, vehicle_id))
+    cur = c.execute(
+        "UPDATE reminders SET last_date=?,last_mileage=?,updated_at=? WHERE id=? AND vehicle_id=?",
+        (service_date, mileage, now_iso(), reminder_id, vehicle_id),
+    )
     if not cur.rowcount:
         raise HTTPException(400, "Maintenance item not found for this vehicle")
     return reminder_id
 
-def service_dict(c,row):
-    return {"id":row["id"],"vehicle_id":row["vehicle_id"],"date":row["service_date"] or None,"mileage":row["mileage"],
-            "type":row["service_type"],"cost":row["cost"],"provider":row["provider"],"notes":row["notes"],
-            "torque_specs":row["torque_specs"],"fluids":row["fluids"],"gotchas":row["gotchas"],"youtube_url":row["youtube_url"],
-            "logged_by":display_user(c,row["logged_by"]),"logged_by_id":row["logged_by"],"reminder_id":row["reminder_id"],"created_at":row["created_at"],"updated_at":row["updated_at"]}
+
+def service_dict(c, row):
+    return {
+        "id": row["id"],
+        "vehicle_id": row["vehicle_id"],
+        "date": row["service_date"] or None,
+        "mileage": row["mileage"],
+        "type": row["service_type"],
+        "cost": row["cost"],
+        "provider": row["provider"],
+        "notes": row["notes"],
+        "torque_specs": row["torque_specs"],
+        "fluids": row["fluids"],
+        "gotchas": row["gotchas"],
+        "youtube_url": row["youtube_url"],
+        "logged_by": display_user(c, row["logged_by"]),
+        "logged_by_id": row["logged_by"],
+        "reminder_id": row["reminder_id"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
 
 def specs_dict(row):
-    return {k:(row[k] if row else "") for k in SPEC_FIELDS}
+    return {k: (row[k] if row else "") for k in SPEC_FIELDS}
+
 
 def upsert_specs(c, vehicle_id: int, values: dict[str, str]):
     """Insert or update only the given spec columns; other columns keep their stored values."""
-    fields=[k for k in SPEC_FIELDS if k in values]
-    columns=",".join(("vehicle_id",*fields,"updated_at"))
-    marks=",".join("?" for _ in range(len(fields)+2))
-    updates=",".join(f"{k}=excluded.{k}" for k in (*fields,"updated_at"))
-    c.execute(f"INSERT INTO vehicle_specs({columns}) VALUES({marks}) ON CONFLICT(vehicle_id) DO UPDATE SET {updates}", (vehicle_id,*(values[k] for k in fields),now_iso()))
+    fields = [k for k in SPEC_FIELDS if k in values]
+    columns = ",".join(("vehicle_id", *fields, "updated_at"))
+    marks = ",".join("?" for _ in range(len(fields) + 2))
+    updates = ",".join(f"{k}=excluded.{k}" for k in (*fields, "updated_at"))
+    c.execute(
+        f"INSERT INTO vehicle_specs({columns}) VALUES({marks}) ON CONFLICT(vehicle_id) DO UPDATE SET {updates}",
+        (vehicle_id, *(values[k] for k in fields), now_iso()),
+    )
+
 
 def save_specs(c, vehicle_id: int, body: VehicleSpecsIn):
-    upsert_specs(c, vehicle_id, {k:getattr(body,k).strip() for k in SPEC_FIELDS if getattr(body,k) is not None})
-    return specs_dict(c.execute("SELECT * FROM vehicle_specs WHERE vehicle_id=?",(vehicle_id,)).fetchone())
+    upsert_specs(
+        c,
+        vehicle_id,
+        {
+            k: getattr(body, k).strip()
+            for k in SPEC_FIELDS
+            if getattr(body, k) is not None
+        },
+    )
+    return specs_dict(
+        c.execute(
+            "SELECT * FROM vehicle_specs WHERE vehicle_id=?", (vehicle_id,)
+        ).fetchone()
+    )
 
-OIL_SPLIT = re.compile(r"^\s*(.*?)\s*,\s*(\d[\d.]*\s*(?:qt|qts|quarts?|l|liters?|litres?)\.?)\s*$", re.I)
+
+OIL_SPLIT = re.compile(
+    r"^\s*(.*?)\s*,\s*(\d[\d.]*\s*(?:qt|qts|quarts?|l|liters?|litres?)\.?)\s*$", re.I
+)
+
 
 def split_oil_spec(text: str) -> tuple[str, str]:
     """Split a header-style oil spec such as "0W-20, 5.3 qt" into (oil_type, oil_capacity)."""
-    text=(text or "").strip()
-    m=OIL_SPLIT.match(text)
+    text = (text or "").strip()
+    m = OIL_SPLIT.match(text)
     return (m.group(1), m.group(2)) if m and m.group(1) else (text, "")
 
+
 def join_oil_spec(oil_type: str, oil_capacity: str) -> str:
-    return ", ".join(v for v in ((oil_type or "").strip(), (oil_capacity or "").strip()) if v)
+    return ", ".join(
+        v for v in ((oil_type or "").strip(), (oil_capacity or "").strip()) if v
+    )
+
 
 def header_specs(c, vehicle_id: int) -> dict[str, str]:
     """Header chip values for a vehicle, derived from its specs (the single source of truth)."""
-    row=c.execute("SELECT fuel_type,tire_size,oil_type,oil_capacity FROM vehicle_specs WHERE vehicle_id=?",(vehicle_id,)).fetchone()
-    if not row: return {"fuel_type":"","tire_size":"","oil_spec":""}
-    return {"fuel_type":row["fuel_type"],"tire_size":row["tire_size"],"oil_spec":join_oil_spec(row["oil_type"],row["oil_capacity"])}
+    row = c.execute(
+        "SELECT fuel_type,tire_size,oil_type,oil_capacity FROM vehicle_specs WHERE vehicle_id=?",
+        (vehicle_id,),
+    ).fetchone()
+    if not row:
+        return {"fuel_type": "", "tire_size": "", "oil_spec": ""}
+    return {
+        "fuel_type": row["fuel_type"],
+        "tire_size": row["tire_size"],
+        "oil_spec": join_oil_spec(row["oil_type"], row["oil_capacity"]),
+    }
+
 
 def write_header_specs(c, vehicle_id: int, body: "VehicleIn"):
     """Legacy vehicle-level fuel/tire/oil writes land in specs; omitted fields are untouched."""
-    values={}
-    if body.fuel_type is not None: values["fuel_type"]=body.fuel_type.strip()
-    if body.tire_size is not None: values["tire_size"]=body.tire_size.strip()
-    if body.oil_spec is not None: values["oil_type"],values["oil_capacity"]=split_oil_spec(body.oil_spec)
-    if values: upsert_specs(c, vehicle_id, values)
+    values = {}
+    if body.fuel_type is not None:
+        values["fuel_type"] = body.fuel_type.strip()
+    if body.tire_size is not None:
+        values["tire_size"] = body.tire_size.strip()
+    if body.oil_spec is not None:
+        values["oil_type"], values["oil_capacity"] = split_oil_spec(body.oil_spec)
+    if values:
+        upsert_specs(c, vehicle_id, values)
+
 
 def _same(a: str, b: str) -> bool:
-    norm=lambda v: re.sub(r"\s+","",(v or "")).lower()
-    return norm(a)==norm(b)
+    norm = lambda v: re.sub(r"\s+", "", (v or "")).lower()
+    return norm(a) == norm(b)
+
 
 def migrate_header_fields(c):
     """Move legacy vehicles.fuel_type/tire_size/oil_spec into vehicle_specs, then blank them.
@@ -762,200 +1185,399 @@ def migrate_header_fields(c):
     different value, the spec value is kept and the legacy value is saved as a vehicle note
     so nothing is lost. Safe to run repeatedly: blanked legacy columns are skipped.
     """
-    rows=c.execute("SELECT id,owner_id,fuel_type,tire_size,oil_spec FROM vehicles WHERE fuel_type<>'' OR tire_size<>'' OR oil_spec<>''").fetchall()
-    admin=c.execute("SELECT id FROM users WHERE is_admin=1 ORDER BY id LIMIT 1").fetchone()
+    rows = c.execute(
+        "SELECT id,owner_id,fuel_type,tire_size,oil_spec FROM vehicles WHERE fuel_type<>'' OR tire_size<>'' OR oil_spec<>''"
+    ).fetchall()
+    admin = c.execute(
+        "SELECT id FROM users WHERE is_admin=1 ORDER BY id LIMIT 1"
+    ).fetchone()
     for v in rows:
-        spec=c.execute("SELECT * FROM vehicle_specs WHERE vehicle_id=?",(v["id"],)).fetchone()
-        current={k:(spec[k] if spec else "") for k in ("fuel_type","tire_size","oil_type","oil_capacity")}
+        spec = c.execute(
+            "SELECT * FROM vehicle_specs WHERE vehicle_id=?", (v["id"],)
+        ).fetchone()
+        current = {
+            k: (spec[k] if spec else "")
+            for k in ("fuel_type", "tire_size", "oil_type", "oil_capacity")
+        }
         fills, conflicts = {}, []
-        for field,label in (("fuel_type","Fuel"),("tire_size","Tires")):
-            legacy=v[field].strip()
-            if not legacy: continue
-            if not current[field]: fills[field]=legacy
-            elif not _same(current[field],legacy): conflicts.append(f"{label}: {legacy}")
-        legacy_oil=v["oil_spec"].strip()
+        for field, label in (("fuel_type", "Fuel"), ("tire_size", "Tires")):
+            legacy = v[field].strip()
+            if not legacy:
+                continue
+            if not current[field]:
+                fills[field] = legacy
+            elif not _same(current[field], legacy):
+                conflicts.append(f"{label}: {legacy}")
+        legacy_oil = v["oil_spec"].strip()
         if legacy_oil:
-            oil_type,oil_capacity=split_oil_spec(legacy_oil); clash=False
-            for field,value in (("oil_type",oil_type),("oil_capacity",oil_capacity)):
-                if not value: continue
-                if not current[field]: fills[field]=value
-                elif not _same(current[field],value): clash=True
-            if clash: conflicts.append(f"Oil: {legacy_oil}")
-        author=v["owner_id"] or (admin["id"] if admin else None)
-        if conflicts and author is None: continue  # nowhere to keep the conflicting value; leave legacy data in place
-        if fills: upsert_specs(c, v["id"], fills)
+            oil_type, oil_capacity = split_oil_spec(legacy_oil)
+            clash = False
+            for field, value in (
+                ("oil_type", oil_type),
+                ("oil_capacity", oil_capacity),
+            ):
+                if not value:
+                    continue
+                if not current[field]:
+                    fills[field] = value
+                elif not _same(current[field], value):
+                    clash = True
+            if clash:
+                conflicts.append(f"Oil: {legacy_oil}")
+        author = v["owner_id"] or (admin["id"] if admin else None)
+        if conflicts and author is None:
+            continue  # nowhere to keep the conflicting value; leave legacy data in place
+        if fills:
+            upsert_specs(c, v["id"], fills)
         if conflicts:
-            stamp=now_iso()
-            c.execute("INSERT INTO notes(vehicle_id,note_date,body,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?)",
-                      (v["id"],stamp[:10],"Header value kept during specs migration (specs already had a different value):\n"+"\n".join(conflicts),author,stamp,stamp))
-        c.execute("UPDATE vehicles SET fuel_type='',tire_size='',oil_spec='' WHERE id=?",(v["id"],))
+            stamp = now_iso()
+            c.execute(
+                "INSERT INTO notes(vehicle_id,note_date,body,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+                (
+                    v["id"],
+                    stamp[:10],
+                    "Header value kept during specs migration (specs already had a different value):\n"
+                    + "\n".join(conflicts),
+                    author,
+                    stamp,
+                    stamp,
+                ),
+            )
+        c.execute(
+            "UPDATE vehicles SET fuel_type='',tire_size='',oil_spec='' WHERE id=?",
+            (v["id"],),
+        )
+
 
 @app.get("/api/vehicles/{vehicle_id}/specs")
-def get_specs(vehicle_id:int, request:Request):
-    user=current_user(request)
+def get_specs(vehicle_id: int, request: Request):
+    user = current_user(request)
     with db() as c:
-        get_visible_vehicle(c,vehicle_id,user)
-        return specs_dict(c.execute("SELECT * FROM vehicle_specs WHERE vehicle_id=?",(vehicle_id,)).fetchone())
+        get_visible_vehicle(c, vehicle_id, user)
+        return specs_dict(
+            c.execute(
+                "SELECT * FROM vehicle_specs WHERE vehicle_id=?", (vehicle_id,)
+            ).fetchone()
+        )
+
 
 @app.put("/api/vehicles/{vehicle_id}/specs")
-def put_specs(vehicle_id:int, body:VehicleSpecsIn, request:Request):
-    user=current_user(request)
+def put_specs(vehicle_id: int, body: VehicleSpecsIn, request: Request):
+    user = current_user(request)
     with db() as c:
-        vehicle=get_visible_vehicle(c,vehicle_id,user)
+        vehicle = get_visible_vehicle(c, vehicle_id, user)
         require_vehicle_edit(vehicle, user)
-        return save_specs(c,vehicle_id,body)
+        return save_specs(c, vehicle_id, body)
+
 
 @app.get("/api/services")
-def list_services(request:Request, vehicle_id:int|None=None):
-    user=current_user(request)
+def list_services(request: Request, vehicle_id: int | None = None):
+    user = current_user(request)
     with db() as c:
-        visible=visible_vehicle_ids(c,user)
-        rows=c.execute("SELECT * FROM services WHERE (? IS NULL OR vehicle_id=?) ORDER BY service_date DESC,id DESC",(vehicle_id,vehicle_id))
-        return [service_dict(c,r) for r in rows if r["vehicle_id"] in visible]
+        visible = visible_vehicle_ids(c, user)
+        rows = c.execute(
+            "SELECT * FROM services WHERE (? IS NULL OR vehicle_id=?) ORDER BY service_date DESC,id DESC",
+            (vehicle_id, vehicle_id),
+        )
+        return [service_dict(c, r) for r in rows if r["vehicle_id"] in visible]
+
 
 @app.post("/api/services")
-def add_service(body:ServiceIn, request:Request):
-    user=current_user(request); stamp=now_iso()
+def add_service(body: ServiceIn, request: Request):
+    user = current_user(request)
+    stamp = now_iso()
     with db() as c:
-        require_vehicle_edit(get_visible_vehicle(c,body.vehicle_id,user),user)
-        if not c.execute("SELECT 1 FROM vehicles WHERE id=?",(body.vehicle_id,)).fetchone(): raise HTTPException(404,"Vehicle not found")
-        service_date=body.date or ""
-        reminder_id=apply_reminder_reset(c, body.vehicle_id, body.reminder_id, service_date, body.mileage)
-        cur=c.execute("""INSERT INTO services(vehicle_id,service_date,mileage,service_type,cost,provider,notes,torque_specs,fluids,gotchas,youtube_url,logged_by,reminder_id,created_at,updated_at)
-          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(body.vehicle_id,service_date,body.mileage,body.type.strip(),body.cost,body.provider.strip(),body.notes.strip(),body.torque_specs.strip(),body.fluids.strip(),body.gotchas.strip(),body.youtube_url.strip(),user["id"],reminder_id,stamp,stamp))
+        require_vehicle_edit(get_visible_vehicle(c, body.vehicle_id, user), user)
+        if not c.execute(
+            "SELECT 1 FROM vehicles WHERE id=?", (body.vehicle_id,)
+        ).fetchone():
+            raise HTTPException(404, "Vehicle not found")
+        service_date = body.date or ""
+        reminder_id = apply_reminder_reset(
+            c, body.vehicle_id, body.reminder_id, service_date, body.mileage
+        )
+        cur = c.execute(
+            """INSERT INTO services(vehicle_id,service_date,mileage,service_type,cost,provider,notes,torque_specs,fluids,gotchas,youtube_url,logged_by,reminder_id,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                body.vehicle_id,
+                service_date,
+                body.mileage,
+                body.type.strip(),
+                body.cost,
+                body.provider.strip(),
+                body.notes.strip(),
+                body.torque_specs.strip(),
+                body.fluids.strip(),
+                body.gotchas.strip(),
+                body.youtube_url.strip(),
+                user["id"],
+                reminder_id,
+                stamp,
+                stamp,
+            ),
+        )
         update_vehicle_mileage(c, body.vehicle_id, body.mileage, user["id"], stamp)
-        return service_dict(c,c.execute("SELECT * FROM services WHERE id=?",(cur.lastrowid,)).fetchone())
+        return service_dict(
+            c,
+            c.execute("SELECT * FROM services WHERE id=?", (cur.lastrowid,)).fetchone(),
+        )
+
 
 @app.put("/api/services/{item_id}")
-def update_service(item_id:int,body:ServiceIn,request:Request):
-    user=current_user(request)
+def update_service(item_id: int, body: ServiceIn, request: Request):
+    user = current_user(request)
     with db() as c:
-        existing=c.execute("SELECT vehicle_id FROM services WHERE id=?",(item_id,)).fetchone()
-        if not existing: raise HTTPException(404,"Service not found")
-        require_vehicle_edit(get_visible_vehicle(c,existing["vehicle_id"],user),user)
-        require_vehicle_edit(get_visible_vehicle(c,body.vehicle_id,user),user)
-        service_date=body.date or ""
-        reminder_id=apply_reminder_reset(c, body.vehicle_id, body.reminder_id, service_date, body.mileage)
-        cur=c.execute("""UPDATE services SET vehicle_id=?,service_date=?,mileage=?,service_type=?,cost=?,provider=?,notes=?,torque_specs=?,fluids=?,gotchas=?,youtube_url=?,reminder_id=?,updated_at=? WHERE id=?""",
-          (body.vehicle_id,service_date,body.mileage,body.type.strip(),body.cost,body.provider.strip(),body.notes.strip(),body.torque_specs.strip(),body.fluids.strip(),body.gotchas.strip(),body.youtube_url.strip(),reminder_id,now_iso(),item_id))
-        if not cur.rowcount: raise HTTPException(404,"Service not found")
-        return service_dict(c,c.execute("SELECT * FROM services WHERE id=?",(item_id,)).fetchone())
+        existing = c.execute(
+            "SELECT vehicle_id FROM services WHERE id=?", (item_id,)
+        ).fetchone()
+        if not existing:
+            raise HTTPException(404, "Service not found")
+        require_vehicle_edit(get_visible_vehicle(c, existing["vehicle_id"], user), user)
+        require_vehicle_edit(get_visible_vehicle(c, body.vehicle_id, user), user)
+        service_date = body.date or ""
+        reminder_id = apply_reminder_reset(
+            c, body.vehicle_id, body.reminder_id, service_date, body.mileage
+        )
+        cur = c.execute(
+            """UPDATE services SET vehicle_id=?,service_date=?,mileage=?,service_type=?,cost=?,provider=?,notes=?,torque_specs=?,fluids=?,gotchas=?,youtube_url=?,reminder_id=?,updated_at=? WHERE id=?""",
+            (
+                body.vehicle_id,
+                service_date,
+                body.mileage,
+                body.type.strip(),
+                body.cost,
+                body.provider.strip(),
+                body.notes.strip(),
+                body.torque_specs.strip(),
+                body.fluids.strip(),
+                body.gotchas.strip(),
+                body.youtube_url.strip(),
+                reminder_id,
+                now_iso(),
+                item_id,
+            ),
+        )
+        if not cur.rowcount:
+            raise HTTPException(404, "Service not found")
+        return service_dict(
+            c, c.execute("SELECT * FROM services WHERE id=?", (item_id,)).fetchone()
+        )
+
 
 @app.delete("/api/services/{item_id}")
-def delete_service(item_id:int,request:Request):
-    user=current_user(request)
+def delete_service(item_id: int, request: Request):
+    user = current_user(request)
     with db() as c:
-        entry=c.execute("SELECT vehicle_id FROM services WHERE id=?",(item_id,)).fetchone()
-        if not entry: raise HTTPException(404,"Entry not found")
-        require_vehicle_edit(get_visible_vehicle(c,entry["vehicle_id"],user),user)
-        if not c.execute("DELETE FROM services WHERE id=?",(item_id,)).rowcount: raise HTTPException(404,"Service not found")
+        entry = c.execute(
+            "SELECT vehicle_id FROM services WHERE id=?", (item_id,)
+        ).fetchone()
+        if not entry:
+            raise HTTPException(404, "Entry not found")
+        require_vehicle_edit(get_visible_vehicle(c, entry["vehicle_id"], user), user)
+        if not c.execute("DELETE FROM services WHERE id=?", (item_id,)).rowcount:
+            raise HTTPException(404, "Service not found")
         delete_receipt_files(c, "service", item_id)
-    return {"ok":True}
+    return {"ok": True}
+
 
 def fuel_rows(c, vehicle_id: int | None = None) -> list[dict[str, Any]]:
-    rows = c.execute("SELECT * FROM fuel_entries WHERE (? IS NULL OR vehicle_id=?) ORDER BY fill_date,id", (vehicle_id, vehicle_id)).fetchall()
+    rows = c.execute(
+        "SELECT * FROM fuel_entries WHERE (? IS NULL OR vehicle_id=?) ORDER BY fill_date,id",
+        (vehicle_id, vehicle_id),
+    ).fetchall()
     out: list[dict[str, Any]] = []
     prev: sqlite3.Row | None = None
     for r in rows:
         mpg = None
         if prev is not None and r["odometer"] > prev["odometer"]:
             mpg = (r["odometer"] - prev["odometer"]) / r["gallons"]
-        out.append({"id": r["id"], "vehicle_id": r["vehicle_id"], "date": r["fill_date"], "odometer": r["odometer"],
-                    "gallons": r["gallons"], "cost": r["cost"], "octane":r["octane"], "mpg": mpg,
-                    "logged_by": display_user(c, r["logged_by"]), "created_at": r["created_at"], "updated_at": r["updated_at"]})
+        out.append(
+            {
+                "id": r["id"],
+                "vehicle_id": r["vehicle_id"],
+                "date": r["fill_date"],
+                "odometer": r["odometer"],
+                "gallons": r["gallons"],
+                "cost": r["cost"],
+                "octane": r["octane"],
+                "mpg": mpg,
+                "logged_by": display_user(c, r["logged_by"]),
+                "created_at": r["created_at"],
+                "updated_at": r["updated_at"],
+            }
+        )
         prev = r
     out.reverse()
     return out
+
 
 def one_fuel(c, item_id: int) -> dict[str, Any]:
     row = c.execute("SELECT * FROM fuel_entries WHERE id=?", (item_id,)).fetchone()
     return next(r for r in fuel_rows(c, row["vehicle_id"]) if r["id"] == item_id)
 
+
 @app.get("/api/fuel")
 def list_fuel(request: Request, vehicle_id: int | None = None):
-    user=current_user(request)
+    user = current_user(request)
     with db() as c:
-        visible=visible_vehicle_ids(c,user)
+        visible = visible_vehicle_ids(c, user)
         return [r for r in fuel_rows(c, vehicle_id) if r["vehicle_id"] in visible]
+
 
 @app.post("/api/fuel")
 def add_fuel(body: FuelIn, request: Request):
-    user = current_user(request); stamp = now_iso()
+    user = current_user(request)
+    stamp = now_iso()
     with db() as c:
-        require_vehicle_edit(get_visible_vehicle(c,body.vehicle_id,user),user)
-        if not c.execute("SELECT 1 FROM vehicles WHERE id=?", (body.vehicle_id,)).fetchone():
+        require_vehicle_edit(get_visible_vehicle(c, body.vehicle_id, user), user)
+        if not c.execute(
+            "SELECT 1 FROM vehicles WHERE id=?", (body.vehicle_id,)
+        ).fetchone():
             raise HTTPException(404, "Vehicle not found")
-        cur = c.execute("INSERT INTO fuel_entries(vehicle_id,fill_date,odometer,gallons,cost,octane,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                        (body.vehicle_id, body.date, body.odometer, body.gallons, body.cost, body.octane.strip(), user["id"], stamp, stamp))
+        cur = c.execute(
+            "INSERT INTO fuel_entries(vehicle_id,fill_date,odometer,gallons,cost,octane,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+            (
+                body.vehicle_id,
+                body.date,
+                body.odometer,
+                body.gallons,
+                body.cost,
+                body.octane.strip(),
+                user["id"],
+                stamp,
+                stamp,
+            ),
+        )
         update_vehicle_mileage(c, body.vehicle_id, body.odometer, user["id"], stamp)
         return one_fuel(c, cur.lastrowid)
 
+
 @app.put("/api/fuel/{item_id}")
 def update_fuel(item_id: int, body: FuelIn, request: Request):
-    user=current_user(request)
+    user = current_user(request)
     with db() as c:
-        existing=c.execute("SELECT vehicle_id FROM fuel_entries WHERE id=?",(item_id,)).fetchone()
-        if not existing: raise HTTPException(404,"Fill-up not found")
-        require_vehicle_edit(get_visible_vehicle(c,existing["vehicle_id"],user),user)
-        require_vehicle_edit(get_visible_vehicle(c,body.vehicle_id,user),user)
-        cur = c.execute("UPDATE fuel_entries SET vehicle_id=?,fill_date=?,odometer=?,gallons=?,cost=?,octane=?,updated_at=? WHERE id=?",
-                        (body.vehicle_id, body.date, body.odometer, body.gallons, body.cost, body.octane.strip(), now_iso(), item_id))
+        existing = c.execute(
+            "SELECT vehicle_id FROM fuel_entries WHERE id=?", (item_id,)
+        ).fetchone()
+        if not existing:
+            raise HTTPException(404, "Fill-up not found")
+        require_vehicle_edit(get_visible_vehicle(c, existing["vehicle_id"], user), user)
+        require_vehicle_edit(get_visible_vehicle(c, body.vehicle_id, user), user)
+        cur = c.execute(
+            "UPDATE fuel_entries SET vehicle_id=?,fill_date=?,odometer=?,gallons=?,cost=?,octane=?,updated_at=? WHERE id=?",
+            (
+                body.vehicle_id,
+                body.date,
+                body.odometer,
+                body.gallons,
+                body.cost,
+                body.octane.strip(),
+                now_iso(),
+                item_id,
+            ),
+        )
         if not cur.rowcount:
             raise HTTPException(404, "Fill-up not found")
         return one_fuel(c, item_id)
 
+
 @app.delete("/api/fuel/{item_id}")
 def delete_fuel(item_id: int, request: Request):
-    user=current_user(request)
+    user = current_user(request)
     with db() as c:
-        entry=c.execute("SELECT vehicle_id FROM fuel_entries WHERE id=?",(item_id,)).fetchone()
-        if not entry: raise HTTPException(404,"Entry not found")
-        require_vehicle_edit(get_visible_vehicle(c,entry["vehicle_id"],user),user)
+        entry = c.execute(
+            "SELECT vehicle_id FROM fuel_entries WHERE id=?", (item_id,)
+        ).fetchone()
+        if not entry:
+            raise HTTPException(404, "Entry not found")
+        require_vehicle_edit(get_visible_vehicle(c, entry["vehicle_id"], user), user)
         if not c.execute("DELETE FROM fuel_entries WHERE id=?", (item_id,)).rowcount:
             raise HTTPException(404, "Fill-up not found")
         delete_receipt_files(c, "fuel", item_id)
     return {"ok": True}
 
+
 def receipt_vehicle_id(c: sqlite3.Connection, row: sqlite3.Row) -> int | None:
     if row["kind"] == "vehicle":
         return row["entry_id"]
-    table = "services" if row["kind"] == "service" else "fuel_entries" if row["kind"] == "fuel" else None
+    table = (
+        "services"
+        if row["kind"] == "service"
+        else "fuel_entries" if row["kind"] == "fuel" else None
+    )
     if not table:
         return None
-    entry = c.execute(f"SELECT vehicle_id FROM {table} WHERE id=?", (row["entry_id"],)).fetchone()
+    entry = c.execute(
+        f"SELECT vehicle_id FROM {table} WHERE id=?", (row["entry_id"],)
+    ).fetchone()
     return entry["vehicle_id"] if entry else None
 
-def require_receipt_access(c: sqlite3.Connection, row: sqlite3.Row, user: sqlite3.Row) -> None:
+
+def require_receipt_access(
+    c: sqlite3.Connection, row: sqlite3.Row, user: sqlite3.Row
+) -> None:
     vehicle_id = receipt_vehicle_id(c, row)
     if vehicle_id is None:
         raise HTTPException(404, "Receipt not found")
     get_visible_vehicle(c, vehicle_id, user)
 
+
 def receipt_dict(c, row) -> dict[str, Any]:
-    return {"id": row["id"], "kind": row["kind"], "entry_id": row["entry_id"], "orig_name": row["orig_name"],
-            "mime": row["mime"], "size": row["size"], "uploaded_by": display_user(c, row["uploaded_by"]),
-            "created_at": row["created_at"], "url": f"/api/receipts/{row['id']}"}
+    return {
+        "id": row["id"],
+        "kind": row["kind"],
+        "entry_id": row["entry_id"],
+        "orig_name": row["orig_name"],
+        "mime": row["mime"],
+        "size": row["size"],
+        "uploaded_by": display_user(c, row["uploaded_by"]),
+        "created_at": row["created_at"],
+        "url": f"/api/receipts/{row['id']}",
+    }
+
 
 def delete_receipt_files(c, kind: str, entry_id: int) -> None:
-    for r in c.execute("SELECT stored_name FROM receipts WHERE kind=? AND entry_id=?", (kind, entry_id)):
+    for r in c.execute(
+        "SELECT stored_name FROM receipts WHERE kind=? AND entry_id=?", (kind, entry_id)
+    ):
         (RECEIPTS_DIR / r["stored_name"]).unlink(missing_ok=True)
     c.execute("DELETE FROM receipts WHERE kind=? AND entry_id=?", (kind, entry_id))
 
+
 @app.get("/api/receipts")
-def list_receipts(request: Request, kind: str | None = None, entry_id: int | None = None):
+def list_receipts(
+    request: Request, kind: str | None = None, entry_id: int | None = None
+):
     user = current_user(request)
     with db() as c:
-        rows = c.execute("SELECT * FROM receipts WHERE (? IS NULL OR kind=?) AND (? IS NULL OR entry_id=?) ORDER BY id", (kind, kind, entry_id, entry_id))
-        return [receipt_dict(c, r) for r in rows if (vehicle_id := receipt_vehicle_id(c, r)) is not None and vehicle_accessible(get_vehicle_or_404(c, vehicle_id), user)]
+        rows = c.execute(
+            "SELECT * FROM receipts WHERE (? IS NULL OR kind=?) AND (? IS NULL OR entry_id=?) ORDER BY id",
+            (kind, kind, entry_id, entry_id),
+        )
+        return [
+            receipt_dict(c, r)
+            for r in rows
+            if (vehicle_id := receipt_vehicle_id(c, r)) is not None
+            and vehicle_accessible(get_vehicle_or_404(c, vehicle_id), user)
+        ]
+
 
 @app.post("/api/receipts", status_code=201)
-async def upload_receipt(request: Request, kind: str = Form(...), entry_id: int = Form(...), file: UploadFile = File(...)):
+async def upload_receipt(
+    request: Request,
+    kind: str = Form(...),
+    entry_id: int = Form(...),
+    file: UploadFile = File(...),
+):
     user = current_user(request)
     if kind not in ("service", "fuel"):
         raise HTTPException(400, "Receipts attach to service or fuel entries")
     mime = (file.content_type or "").lower()
     if mime not in RECEIPT_TYPES:
-        raise HTTPException(400, "Receipt photos must be JPEG, PNG, WebP, GIF, or HEIC images")
+        raise HTTPException(
+            400, "Receipt photos must be JPEG, PNG, WebP, GIF, or HEIC images"
+        )
     data = await file.read()
     if not data:
         raise HTTPException(400, "Empty file")
@@ -963,15 +1585,32 @@ async def upload_receipt(request: Request, kind: str = Form(...), entry_id: int 
         raise HTTPException(400, "Receipt photos are limited to 10 MB")
     with db() as c:
         table = "services" if kind == "service" else "fuel_entries"
-        entry = c.execute(f"SELECT vehicle_id FROM {table} WHERE id=?", (entry_id,)).fetchone()
+        entry = c.execute(
+            f"SELECT vehicle_id FROM {table} WHERE id=?", (entry_id,)
+        ).fetchone()
         if not entry:
             raise HTTPException(404, "Entry not found")
         require_vehicle_edit(get_visible_vehicle(c, entry["vehicle_id"], user), user)
         stored = f"{secrets.token_hex(16)}{RECEIPT_TYPES[mime]}"
         (RECEIPTS_DIR / stored).write_bytes(data)
-        cur = c.execute("INSERT INTO receipts(kind,entry_id,stored_name,orig_name,mime,size,uploaded_by,created_at) VALUES(?,?,?,?,?,?,?,?)",
-                        (kind, entry_id, stored, (file.filename or "")[:120], mime, len(data), user["id"], now_iso()))
-        return receipt_dict(c, c.execute("SELECT * FROM receipts WHERE id=?", (cur.lastrowid,)).fetchone())
+        cur = c.execute(
+            "INSERT INTO receipts(kind,entry_id,stored_name,orig_name,mime,size,uploaded_by,created_at) VALUES(?,?,?,?,?,?,?,?)",
+            (
+                kind,
+                entry_id,
+                stored,
+                (file.filename or "")[:120],
+                mime,
+                len(data),
+                user["id"],
+                now_iso(),
+            ),
+        )
+        return receipt_dict(
+            c,
+            c.execute("SELECT * FROM receipts WHERE id=?", (cur.lastrowid,)).fetchone(),
+        )
+
 
 @app.get("/api/receipts/{receipt_id}")
 def get_receipt(receipt_id: int, request: Request):
@@ -987,6 +1626,7 @@ def get_receipt(receipt_id: int, request: Request):
         raise HTTPException(404, "Receipt file is missing")
     return FileResponse(path, media_type=row["mime"])
 
+
 @app.delete("/api/receipts/{receipt_id}")
 def delete_receipt(receipt_id: int, request: Request):
     user = current_user(request)
@@ -998,16 +1638,21 @@ def delete_receipt(receipt_id: int, request: Request):
         vehicle_id = receipt_vehicle_id(c, row)
         require_vehicle_edit(get_vehicle_or_404(c, vehicle_id), user)
         if row["kind"] == "vehicle":
-            c.execute("UPDATE vehicles SET photo_receipt_id=NULL WHERE photo_receipt_id=?", (receipt_id,))
+            c.execute(
+                "UPDATE vehicles SET photo_receipt_id=NULL WHERE photo_receipt_id=?",
+                (receipt_id,),
+            )
         (RECEIPTS_DIR / row["stored_name"]).unlink(missing_ok=True)
         c.execute("DELETE FROM receipts WHERE id=?", (receipt_id,))
     return {"ok": True}
+
 
 def get_vehicle_or_404(c, vehicle_id: int) -> sqlite3.Row:
     row = c.execute("SELECT * FROM vehicles WHERE id=?", (vehicle_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Vehicle not found")
     return row
+
 
 def reminder_status(mileage: int, r, today: date | None = None) -> dict[str, Any]:
     today = today or datetime.now(timezone.utc).date()
@@ -1022,77 +1667,181 @@ def reminder_status(mileage: int, r, today: date | None = None) -> dict[str, Any
         month_index = last.month - 1 + r["months_interval"]
         year = last.year + month_index // 12
         month = month_index % 12 + 1
-        days_in_month = [31, 29 if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]
+        days_in_month = [
+            31,
+            29 if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0) else 28,
+            31,
+            30,
+            31,
+            30,
+            31,
+            31,
+            30,
+            31,
+            30,
+            31,
+        ][month - 1]
         due_date = date(year, month, min(last.day, days_in_month))
         total = (due_date - last).days
         progress.append((today - last).days / total if total > 0 else 1)
         days_left = (due_date - today).days
-        labels.append(f"{days_left} days remaining" if days_left >= 0 else f"{-days_left} days late")
+        labels.append(
+            f"{days_left} days remaining"
+            if days_left >= 0
+            else f"{-days_left} days late"
+        )
     if r["due_date"]:
-        due_date=datetime.strptime(r["due_date"], "%Y-%m-%d").date()
+        due_date = datetime.strptime(r["due_date"], "%Y-%m-%d").date()
         if r["repeats_yearly"]:
-            max_day=[31,29 if today.year%4==0 and (today.year%100!=0 or today.year%400==0) else 28,31,30,31,30,31,31,30,31,30,31][due_date.month-1]
-            due_date=date(today.year,due_date.month,min(due_date.day,max_day))
-            if due_date < today: due_date=due_date.replace(year=today.year+1)
-        days_left=(due_date-today).days
-        progress.append(1 if days_left < 0 else .8 if days_left <= 30 else 0)
-        labels.append(f"due {due_date.strftime('%b %-d, %Y')}" if days_left >= 0 else f"{-days_left} days late")
+            max_day = [
+                31,
+                (
+                    29
+                    if today.year % 4 == 0
+                    and (today.year % 100 != 0 or today.year % 400 == 0)
+                    else 28
+                ),
+                31,
+                30,
+                31,
+                30,
+                31,
+                31,
+                30,
+                31,
+                30,
+                31,
+            ][due_date.month - 1]
+            due_date = date(today.year, due_date.month, min(due_date.day, max_day))
+            if due_date < today:
+                due_date = due_date.replace(year=today.year + 1)
+        days_left = (due_date - today).days
+        progress.append(1 if days_left < 0 else 0.8 if days_left <= 30 else 0)
+        labels.append(
+            f"due {due_date.strftime('%b %-d, %Y')}"
+            if days_left >= 0
+            else f"{-days_left} days late"
+        )
     p = max(progress) if progress else 0
     state = "overdue" if p >= 1 else "soon" if p >= 0.8 else "ok"
-    return {"state": state, "progress": min(1, p), "label": " · ".join(labels) or "No schedule"}
+    return {
+        "state": state,
+        "progress": min(1, p),
+        "label": " · ".join(labels) or "No schedule",
+    }
+
 
 def reminder_dict(row):
-    return {"id":row["id"],"vehicle_id":row["vehicle_id"],"name":row["name"],"miles_interval":row["miles_interval"],
-            "months_interval":row["months_interval"],"last_date":row["last_date"],"last_mileage":row["last_mileage"],"due_date":row["due_date"],"repeats_yearly":bool(row["repeats_yearly"])}
+    return {
+        "id": row["id"],
+        "vehicle_id": row["vehicle_id"],
+        "name": row["name"],
+        "miles_interval": row["miles_interval"],
+        "months_interval": row["months_interval"],
+        "last_date": row["last_date"],
+        "last_mileage": row["last_mileage"],
+        "due_date": row["due_date"],
+        "repeats_yearly": bool(row["repeats_yearly"]),
+    }
+
 
 @app.get("/api/reminders")
-def list_reminders(request:Request,vehicle_id:int|None=None):
-    user=current_user(request)
+def list_reminders(request: Request, vehicle_id: int | None = None):
+    user = current_user(request)
     with db() as c:
-        visible=visible_vehicle_ids(c,user)
-        rows=c.execute("SELECT * FROM reminders WHERE (? IS NULL OR vehicle_id=?) ORDER BY id",(vehicle_id,vehicle_id))
+        visible = visible_vehicle_ids(c, user)
+        rows = c.execute(
+            "SELECT * FROM reminders WHERE (? IS NULL OR vehicle_id=?) ORDER BY id",
+            (vehicle_id, vehicle_id),
+        )
         return [reminder_dict(r) for r in rows if r["vehicle_id"] in visible]
 
+
 @app.post("/api/reminders")
-def add_reminder(body:ReminderIn,request:Request):
-    user=current_user(request)
-    if not body.miles_interval and not body.months_interval and not body.due_date: raise HTTPException(400,"Choose a due date, miles, months, or a combination")
-    stamp=now_iso()
+def add_reminder(body: ReminderIn, request: Request):
+    user = current_user(request)
+    if not body.miles_interval and not body.months_interval and not body.due_date:
+        raise HTTPException(400, "Choose a due date, miles, months, or a combination")
+    stamp = now_iso()
     with db() as c:
-        require_vehicle_edit(get_visible_vehicle(c,body.vehicle_id,user),user)
-        cur=c.execute("""INSERT INTO reminders(vehicle_id,name,miles_interval,months_interval,last_date,last_mileage,due_date,repeats_yearly,created_at,updated_at)
-          VALUES(?,?,?,?,?,?,?,?,?,?)""",(body.vehicle_id,body.name.strip(),body.miles_interval,body.months_interval,body.last_date,body.last_mileage,body.due_date or None,int(body.repeats_yearly),stamp,stamp))
-        return reminder_dict(c.execute("SELECT * FROM reminders WHERE id=?",(cur.lastrowid,)).fetchone())
+        require_vehicle_edit(get_visible_vehicle(c, body.vehicle_id, user), user)
+        cur = c.execute(
+            """INSERT INTO reminders(vehicle_id,name,miles_interval,months_interval,last_date,last_mileage,due_date,repeats_yearly,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,?,?)""",
+            (
+                body.vehicle_id,
+                body.name.strip(),
+                body.miles_interval,
+                body.months_interval,
+                body.last_date,
+                body.last_mileage,
+                body.due_date or None,
+                int(body.repeats_yearly),
+                stamp,
+                stamp,
+            ),
+        )
+        return reminder_dict(
+            c.execute("SELECT * FROM reminders WHERE id=?", (cur.lastrowid,)).fetchone()
+        )
+
 
 @app.put("/api/reminders/{item_id}")
-def update_reminder(item_id:int,body:ReminderIn,request:Request):
-    user=current_user(request)
-    if not body.miles_interval and not body.months_interval and not body.due_date: raise HTTPException(400,"Choose a due date, miles, months, or a combination")
+def update_reminder(item_id: int, body: ReminderIn, request: Request):
+    user = current_user(request)
+    if not body.miles_interval and not body.months_interval and not body.due_date:
+        raise HTTPException(400, "Choose a due date, miles, months, or a combination")
     with db() as c:
-        existing=c.execute("SELECT vehicle_id FROM reminders WHERE id=?",(item_id,)).fetchone()
-        if not existing: raise HTTPException(404,"Reminder not found")
-        require_vehicle_edit(get_visible_vehicle(c,existing["vehicle_id"],user),user)
-        require_vehicle_edit(get_visible_vehicle(c,body.vehicle_id,user),user)
-        cur=c.execute("""UPDATE reminders SET vehicle_id=?,name=?,miles_interval=?,months_interval=?,last_date=?,last_mileage=?,due_date=?,repeats_yearly=?,updated_at=? WHERE id=?""",
-          (body.vehicle_id,body.name.strip(),body.miles_interval,body.months_interval,body.last_date,body.last_mileage,body.due_date or None,int(body.repeats_yearly),now_iso(),item_id))
-        if not cur.rowcount: raise HTTPException(404,"Reminder not found")
-        return reminder_dict(c.execute("SELECT * FROM reminders WHERE id=?",(item_id,)).fetchone())
+        existing = c.execute(
+            "SELECT vehicle_id FROM reminders WHERE id=?", (item_id,)
+        ).fetchone()
+        if not existing:
+            raise HTTPException(404, "Reminder not found")
+        require_vehicle_edit(get_visible_vehicle(c, existing["vehicle_id"], user), user)
+        require_vehicle_edit(get_visible_vehicle(c, body.vehicle_id, user), user)
+        cur = c.execute(
+            """UPDATE reminders SET vehicle_id=?,name=?,miles_interval=?,months_interval=?,last_date=?,last_mileage=?,due_date=?,repeats_yearly=?,updated_at=? WHERE id=?""",
+            (
+                body.vehicle_id,
+                body.name.strip(),
+                body.miles_interval,
+                body.months_interval,
+                body.last_date,
+                body.last_mileage,
+                body.due_date or None,
+                int(body.repeats_yearly),
+                now_iso(),
+                item_id,
+            ),
+        )
+        if not cur.rowcount:
+            raise HTTPException(404, "Reminder not found")
+        return reminder_dict(
+            c.execute("SELECT * FROM reminders WHERE id=?", (item_id,)).fetchone()
+        )
+
 
 @app.delete("/api/reminders/{item_id}")
-def delete_reminder(item_id:int,request:Request):
-    user=current_user(request)
+def delete_reminder(item_id: int, request: Request):
+    user = current_user(request)
     with db() as c:
-        entry=c.execute("SELECT vehicle_id FROM reminders WHERE id=?",(item_id,)).fetchone()
-        if not entry: raise HTTPException(404,"Entry not found")
-        require_vehicle_edit(get_visible_vehicle(c,entry["vehicle_id"],user),user)
-        if not c.execute("DELETE FROM reminders WHERE id=?",(item_id,)).rowcount: raise HTTPException(404,"Reminder not found")
-    return {"ok":True}
+        entry = c.execute(
+            "SELECT vehicle_id FROM reminders WHERE id=?", (item_id,)
+        ).fetchone()
+        if not entry:
+            raise HTTPException(404, "Entry not found")
+        require_vehicle_edit(get_visible_vehicle(c, entry["vehicle_id"], user), user)
+        if not c.execute("DELETE FROM reminders WHERE id=?", (item_id,)).rowcount:
+            raise HTTPException(404, "Reminder not found")
+    return {"ok": True}
+
 
 @app.get("/api/settings")
 def get_settings(request: Request):
     current_user(request)
     with db() as c:
         return read_settings(c)
+
 
 @app.put("/api/settings")
 def update_settings(body: SettingsIn, request: Request):
@@ -1102,53 +1851,100 @@ def update_settings(body: SettingsIn, request: Request):
             name = body.garage_name.strip()
             if not name:
                 raise HTTPException(400, "Garage name is required")
-            c.execute("INSERT INTO settings(key,value) VALUES('garage_name',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (name,))
+            c.execute(
+                "INSERT INTO settings(key,value) VALUES('garage_name',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (name,),
+            )
         for key in SETTINGS_KEYS[1:]:
             value = getattr(body, key)
             if value is not None:
-                c.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, "1" if value else "0"))
+                c.execute(
+                    "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (key, "1" if value else "0"),
+                )
         return read_settings(c)
 
+
 @app.get("/api/users")
-def list_users(request:Request):
-    current_user(request,True)
-    with db() as c:return [public_user(r) for r in c.execute("SELECT * FROM users ORDER BY username COLLATE NOCASE")]
+def list_users(request: Request):
+    current_user(request, True)
+    with db() as c:
+        return [
+            public_user(r)
+            for r in c.execute("SELECT * FROM users ORDER BY username COLLATE NOCASE")
+        ]
+
 
 @app.post("/api/users")
-def create_user(body:UserCreate,request:Request):
-    current_user(request,True); username=clean_username(body.username); pw,salt=password_record(body.password)
+def create_user(body: UserCreate, request: Request):
+    current_user(request, True)
+    username = clean_username(body.username)
+    pw, salt = password_record(body.password)
     try:
         with db() as c:
-            cur=c.execute("INSERT INTO users(username,password_hash,salt,is_admin,active,created_at) VALUES(?,?,?,?,1,?)",
-                          (username,pw,salt,int(body.is_admin),now_iso()))
-            return public_user(c.execute("SELECT * FROM users WHERE id=?",(cur.lastrowid,)).fetchone())
-    except sqlite3.IntegrityError: raise HTTPException(409,"Username already exists")
+            cur = c.execute(
+                "INSERT INTO users(username,password_hash,salt,is_admin,active,created_at) VALUES(?,?,?,?,1,?)",
+                (username, pw, salt, int(body.is_admin), now_iso()),
+            )
+            return public_user(
+                c.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone()
+            )
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, "Username already exists")
+
 
 @app.put("/api/users/{item_id}")
-def update_user(item_id:int,body:UserUpdate,request:Request):
-    actor=current_user(request,True)
+def update_user(item_id: int, body: UserUpdate, request: Request):
+    actor = current_user(request, True)
     with db() as c:
-        row=c.execute("SELECT * FROM users WHERE id=?",(item_id,)).fetchone()
-        if not row: raise HTTPException(404,"User not found")
-        username=clean_username(body.username) if body.username is not None else row["username"]
-        is_admin=int(body.is_admin if body.is_admin is not None else row["is_admin"])
-        active=int(body.active if body.active is not None else row["active"])
-        if actor["id"]==item_id and (not is_admin or not active): raise HTTPException(400,"You cannot deactivate yourself or remove your own administrator access")
-        pw,salt=(row["password_hash"],row["salt"])
-        if body.password: pw,salt=password_record(body.password)
-        try:c.execute("UPDATE users SET username=?,password_hash=?,salt=?,is_admin=?,active=? WHERE id=?",(username,pw,salt,is_admin,active,item_id))
-        except sqlite3.IntegrityError:raise HTTPException(409,"Username already exists")
-        if not active:c.execute("DELETE FROM sessions WHERE user_id=?",(item_id,))
-        return public_user(c.execute("SELECT * FROM users WHERE id=?",(item_id,)).fetchone())
+        row = c.execute("SELECT * FROM users WHERE id=?", (item_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "User not found")
+        username = (
+            clean_username(body.username)
+            if body.username is not None
+            else row["username"]
+        )
+        is_admin = int(body.is_admin if body.is_admin is not None else row["is_admin"])
+        active = int(body.active if body.active is not None else row["active"])
+        if actor["id"] == item_id and (not is_admin or not active):
+            raise HTTPException(
+                400,
+                "You cannot deactivate yourself or remove your own administrator access",
+            )
+        pw, salt = (row["password_hash"], row["salt"])
+        if body.password:
+            pw, salt = password_record(body.password)
+        try:
+            c.execute(
+                "UPDATE users SET username=?,password_hash=?,salt=?,is_admin=?,active=? WHERE id=?",
+                (username, pw, salt, is_admin, active, item_id),
+            )
+        except sqlite3.IntegrityError:
+            raise HTTPException(409, "Username already exists")
+        if not active:
+            c.execute("DELETE FROM sessions WHERE user_id=?", (item_id,))
+        return public_user(
+            c.execute("SELECT * FROM users WHERE id=?", (item_id,)).fetchone()
+        )
+
 
 def token_dict(row, raw: str | None = None) -> dict[str, Any]:
-    out = {"id": row["id"], "name": row["name"], "prefix": row["prefix"], "created_at": row["created_at"], "last_used_at": row["last_used_at"]}
+    out = {
+        "id": row["id"],
+        "name": row["name"],
+        "prefix": row["prefix"],
+        "created_at": row["created_at"],
+        "last_used_at": row["last_used_at"],
+    }
     if raw is not None:
         out["token"] = raw
     return out
 
+
 class TokenIn(BaseModel):
     name: str = Field(min_length=1, max_length=60)
+
 
 @app.get("/api/tokens")
 def list_tokens(request: Request):
@@ -1157,49 +1953,88 @@ def list_tokens(request: Request):
         if user["is_admin"]:
             rows = c.execute("SELECT * FROM api_tokens ORDER BY id")
         else:
-            rows = c.execute("SELECT * FROM api_tokens WHERE created_by=? ORDER BY id", (user["id"],))
+            rows = c.execute(
+                "SELECT * FROM api_tokens WHERE created_by=? ORDER BY id", (user["id"],)
+            )
         return [token_dict(r) for r in rows]
+
 
 @app.post("/api/tokens", status_code=201)
 def create_token(body: TokenIn, request: Request):
     user = current_user(request)
     raw = "gar_" + secrets.token_urlsafe(32)
     with db() as c:
-        cur = c.execute("INSERT INTO api_tokens(name,token_hash,prefix,created_by,created_at) VALUES(?,?,?,?,?)",
-                        (body.name.strip(), hashlib.sha256(raw.encode()).hexdigest(), raw[:11], user["id"], now_iso()))
-        return token_dict(c.execute("SELECT * FROM api_tokens WHERE id=?", (cur.lastrowid,)).fetchone(), raw)
+        cur = c.execute(
+            "INSERT INTO api_tokens(name,token_hash,prefix,created_by,created_at) VALUES(?,?,?,?,?)",
+            (
+                body.name.strip(),
+                hashlib.sha256(raw.encode()).hexdigest(),
+                raw[:11],
+                user["id"],
+                now_iso(),
+            ),
+        )
+        return token_dict(
+            c.execute(
+                "SELECT * FROM api_tokens WHERE id=?", (cur.lastrowid,)
+            ).fetchone(),
+            raw,
+        )
+
 
 @app.delete("/api/tokens/{item_id}")
 def revoke_token(item_id: int, request: Request):
     user = current_user(request)
     with db() as c:
         if user["is_admin"]:
-            deleted = c.execute("DELETE FROM api_tokens WHERE id=?", (item_id,)).rowcount
+            deleted = c.execute(
+                "DELETE FROM api_tokens WHERE id=?", (item_id,)
+            ).rowcount
         else:
-            deleted = c.execute("DELETE FROM api_tokens WHERE id=? AND created_by=?", (item_id, user["id"])).rowcount
+            deleted = c.execute(
+                "DELETE FROM api_tokens WHERE id=? AND created_by=?",
+                (item_id, user["id"]),
+            ).rowcount
         if not deleted:
             raise HTTPException(404, "Token not found")
     return {"ok": True}
 
+
 def token_auth(request: Request) -> sqlite3.Row:
     auth = request.headers.get("authorization", "")
     if not auth.lower().startswith("bearer "):
-        raise HTTPException(401, "Missing bearer token", headers={"WWW-Authenticate": "Bearer"})
+        raise HTTPException(
+            401, "Missing bearer token", headers={"WWW-Authenticate": "Bearer"}
+        )
     token_hash = hashlib.sha256(auth[7:].strip().encode()).hexdigest()
     with db() as c:
-        row = c.execute("SELECT * FROM api_tokens WHERE token_hash=?", (token_hash,)).fetchone()
+        row = c.execute(
+            "SELECT * FROM api_tokens WHERE token_hash=?", (token_hash,)
+        ).fetchone()
     if not row:
         ip = client_ip(request)
         retry = api_failure_retry_after(ip)
         if retry:
-            raise HTTPException(429, "Too many failed API attempts. Try again later.", headers={"Retry-After": str(retry)})
+            raise HTTPException(
+                429,
+                "Too many failed API attempts. Try again later.",
+                headers={"Retry-After": str(retry)},
+            )
         record_api_failure(ip)
-        raise HTTPException(401, "Invalid API token", headers={"WWW-Authenticate": "Bearer"})
+        raise HTTPException(
+            401, "Invalid API token", headers={"WWW-Authenticate": "Bearer"}
+        )
     retry = api_call_allowed(token_hash)
     if retry:
-        raise HTTPException(429, "API rate limit exceeded. Try again later.", headers={"Retry-After": str(retry)})
+        raise HTTPException(
+            429,
+            "API rate limit exceeded. Try again later.",
+            headers={"Retry-After": str(retry)},
+        )
     with db() as c:
-        c.execute("UPDATE api_tokens SET last_used_at=? WHERE id=?", (now_iso(), row["id"]))
+        c.execute(
+            "UPDATE api_tokens SET last_used_at=? WHERE id=?", (now_iso(), row["id"])
+        )
     return row
 
 
@@ -1208,51 +2043,87 @@ class NoteIn(BaseModel):
     date: str
     body: str = Field(min_length=1, max_length=2000)
 
+
 def note_dict(c, row):
-    return {"id": row["id"], "vehicle_id": row["vehicle_id"], "date": row["note_date"], "body": row["body"],
-            "logged_by": display_user(c, row["logged_by"]), "logged_by_id": row["logged_by"],
-            "created_at": row["created_at"], "updated_at": row["updated_at"]}
+    return {
+        "id": row["id"],
+        "vehicle_id": row["vehicle_id"],
+        "date": row["note_date"],
+        "body": row["body"],
+        "logged_by": display_user(c, row["logged_by"]),
+        "logged_by_id": row["logged_by"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
 
 @app.get("/api/notes")
 def list_notes(request: Request, vehicle_id: int | None = None):
-    user=current_user(request)
+    user = current_user(request)
     with db() as c:
-        visible=visible_vehicle_ids(c,user)
-        rows = c.execute("SELECT * FROM notes WHERE (? IS NULL OR vehicle_id=?) ORDER BY note_date DESC,id DESC", (vehicle_id, vehicle_id))
+        visible = visible_vehicle_ids(c, user)
+        rows = c.execute(
+            "SELECT * FROM notes WHERE (? IS NULL OR vehicle_id=?) ORDER BY note_date DESC,id DESC",
+            (vehicle_id, vehicle_id),
+        )
         return [note_dict(c, r) for r in rows if r["vehicle_id"] in visible]
+
 
 @app.post("/api/notes", status_code=201)
 def add_note(body: NoteIn, request: Request):
-    user = current_user(request); stamp = now_iso()
+    user = current_user(request)
+    stamp = now_iso()
     with db() as c:
-        require_vehicle_edit(get_visible_vehicle(c,body.vehicle_id,user),user)
-        if not c.execute("SELECT 1 FROM vehicles WHERE id=?", (body.vehicle_id,)).fetchone(): raise HTTPException(404, "Vehicle not found")
-        cur = c.execute("INSERT INTO notes(vehicle_id,note_date,body,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?)",
-                        (body.vehicle_id, body.date, body.body.strip(), user["id"], stamp, stamp))
-        return note_dict(c, c.execute("SELECT * FROM notes WHERE id=?", (cur.lastrowid,)).fetchone())
+        require_vehicle_edit(get_visible_vehicle(c, body.vehicle_id, user), user)
+        if not c.execute(
+            "SELECT 1 FROM vehicles WHERE id=?", (body.vehicle_id,)
+        ).fetchone():
+            raise HTTPException(404, "Vehicle not found")
+        cur = c.execute(
+            "INSERT INTO notes(vehicle_id,note_date,body,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+            (body.vehicle_id, body.date, body.body.strip(), user["id"], stamp, stamp),
+        )
+        return note_dict(
+            c, c.execute("SELECT * FROM notes WHERE id=?", (cur.lastrowid,)).fetchone()
+        )
+
 
 @app.put("/api/notes/{item_id}")
 def update_note(item_id: int, body: NoteIn, request: Request):
-    user=current_user(request)
+    user = current_user(request)
     with db() as c:
-        existing=c.execute("SELECT vehicle_id FROM notes WHERE id=?",(item_id,)).fetchone()
-        if not existing: raise HTTPException(404,"Note not found")
-        require_vehicle_edit(get_visible_vehicle(c,existing["vehicle_id"],user),user)
-        require_vehicle_edit(get_visible_vehicle(c,body.vehicle_id,user),user)
-        cur = c.execute("UPDATE notes SET vehicle_id=?,note_date=?,body=?,updated_at=? WHERE id=?",
-                        (body.vehicle_id, body.date, body.body.strip(), now_iso(), item_id))
-        if not cur.rowcount: raise HTTPException(404, "Note not found")
-        return note_dict(c, c.execute("SELECT * FROM notes WHERE id=?", (item_id,)).fetchone())
+        existing = c.execute(
+            "SELECT vehicle_id FROM notes WHERE id=?", (item_id,)
+        ).fetchone()
+        if not existing:
+            raise HTTPException(404, "Note not found")
+        require_vehicle_edit(get_visible_vehicle(c, existing["vehicle_id"], user), user)
+        require_vehicle_edit(get_visible_vehicle(c, body.vehicle_id, user), user)
+        cur = c.execute(
+            "UPDATE notes SET vehicle_id=?,note_date=?,body=?,updated_at=? WHERE id=?",
+            (body.vehicle_id, body.date, body.body.strip(), now_iso(), item_id),
+        )
+        if not cur.rowcount:
+            raise HTTPException(404, "Note not found")
+        return note_dict(
+            c, c.execute("SELECT * FROM notes WHERE id=?", (item_id,)).fetchone()
+        )
+
 
 @app.delete("/api/notes/{item_id}")
 def delete_note(item_id: int, request: Request):
-    user=current_user(request)
+    user = current_user(request)
     with db() as c:
-        entry=c.execute("SELECT vehicle_id FROM notes WHERE id=?",(item_id,)).fetchone()
-        if not entry: raise HTTPException(404,"Entry not found")
-        require_vehicle_edit(get_visible_vehicle(c,entry["vehicle_id"],user),user)
-        if not c.execute("DELETE FROM notes WHERE id=?", (item_id,)).rowcount: raise HTTPException(404, "Note not found")
+        entry = c.execute(
+            "SELECT vehicle_id FROM notes WHERE id=?", (item_id,)
+        ).fetchone()
+        if not entry:
+            raise HTTPException(404, "Entry not found")
+        require_vehicle_edit(get_visible_vehicle(c, entry["vehicle_id"], user), user)
+        if not c.execute("DELETE FROM notes WHERE id=?", (item_id,)).rowcount:
+            raise HTTPException(404, "Note not found")
     return {"ok": True}
+
 
 class ModIn(BaseModel):
     vehicle_id: int
@@ -1264,50 +2135,115 @@ class ModIn(BaseModel):
     gotchas: str = Field(default="", max_length=1000)
     youtube_url: str = Field(default="", max_length=500)
 
+
 def mod_dict(c, row):
-    return {"id":row["id"],"vehicle_id":row["vehicle_id"],"name":row["name"],"date":row["mod_date"],"price":row["price"],
-            "logged_by":display_user(c,row["logged_by"]),"torque_specs":row["torque_specs"],"fluids":row["fluids"],"gotchas":row["gotchas"],"youtube_url":row["youtube_url"],"created_at":row["created_at"],"updated_at":row["updated_at"]}
+    return {
+        "id": row["id"],
+        "vehicle_id": row["vehicle_id"],
+        "name": row["name"],
+        "date": row["mod_date"],
+        "price": row["price"],
+        "logged_by": display_user(c, row["logged_by"]),
+        "torque_specs": row["torque_specs"],
+        "fluids": row["fluids"],
+        "gotchas": row["gotchas"],
+        "youtube_url": row["youtube_url"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
 
 @app.get("/api/mods")
-def list_mods(request:Request,vehicle_id:int|None=None):
-    user=current_user(request)
+def list_mods(request: Request, vehicle_id: int | None = None):
+    user = current_user(request)
     with db() as c:
-        visible=visible_vehicle_ids(c,user)
-        rows=c.execute("SELECT * FROM modifications WHERE (? IS NULL OR vehicle_id=?) ORDER BY COALESCE(mod_date,'' ) DESC,id DESC",(vehicle_id,vehicle_id))
-        return [mod_dict(c,r) for r in rows if r["vehicle_id"] in visible]
+        visible = visible_vehicle_ids(c, user)
+        rows = c.execute(
+            "SELECT * FROM modifications WHERE (? IS NULL OR vehicle_id=?) ORDER BY COALESCE(mod_date,'' ) DESC,id DESC",
+            (vehicle_id, vehicle_id),
+        )
+        return [mod_dict(c, r) for r in rows if r["vehicle_id"] in visible]
 
-@app.post("/api/mods",status_code=201)
-def add_mod(body:ModIn,request:Request):
-    user=current_user(request);stamp=now_iso()
+
+@app.post("/api/mods", status_code=201)
+def add_mod(body: ModIn, request: Request):
+    user = current_user(request)
+    stamp = now_iso()
     with db() as c:
-        require_vehicle_edit(get_visible_vehicle(c,body.vehicle_id,user),user)
-        get_vehicle_or_404(c,body.vehicle_id)
-        cur=c.execute("INSERT INTO modifications(vehicle_id,name,mod_date,price,logged_by,torque_specs,fluids,gotchas,youtube_url,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                      (body.vehicle_id,body.name.strip(),body.date or None,body.price,user["id"],body.torque_specs.strip(),body.fluids.strip(),body.gotchas.strip(),body.youtube_url.strip(),stamp,stamp))
-        return mod_dict(c,c.execute("SELECT * FROM modifications WHERE id=?",(cur.lastrowid,)).fetchone())
+        require_vehicle_edit(get_visible_vehicle(c, body.vehicle_id, user), user)
+        get_vehicle_or_404(c, body.vehicle_id)
+        cur = c.execute(
+            "INSERT INTO modifications(vehicle_id,name,mod_date,price,logged_by,torque_specs,fluids,gotchas,youtube_url,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                body.vehicle_id,
+                body.name.strip(),
+                body.date or None,
+                body.price,
+                user["id"],
+                body.torque_specs.strip(),
+                body.fluids.strip(),
+                body.gotchas.strip(),
+                body.youtube_url.strip(),
+                stamp,
+                stamp,
+            ),
+        )
+        return mod_dict(
+            c,
+            c.execute(
+                "SELECT * FROM modifications WHERE id=?", (cur.lastrowid,)
+            ).fetchone(),
+        )
+
 
 @app.put("/api/mods/{item_id}")
-def update_mod(item_id:int,body:ModIn,request:Request):
-    user=current_user(request)
+def update_mod(item_id: int, body: ModIn, request: Request):
+    user = current_user(request)
     with db() as c:
-        existing=c.execute("SELECT vehicle_id FROM modifications WHERE id=?",(item_id,)).fetchone()
-        if not existing: raise HTTPException(404,"Modification not found")
-        require_vehicle_edit(get_visible_vehicle(c,existing["vehicle_id"],user),user)
-        require_vehicle_edit(get_visible_vehicle(c,body.vehicle_id,user),user)
-        cur=c.execute("UPDATE modifications SET vehicle_id=?,name=?,mod_date=?,price=?,torque_specs=?,fluids=?,gotchas=?,youtube_url=?,updated_at=? WHERE id=?",
-                      (body.vehicle_id,body.name.strip(),body.date or None,body.price,body.torque_specs.strip(),body.fluids.strip(),body.gotchas.strip(),body.youtube_url.strip(),now_iso(),item_id))
-        if not cur.rowcount: raise HTTPException(404,"Modification not found")
-        return mod_dict(c,c.execute("SELECT * FROM modifications WHERE id=?",(item_id,)).fetchone())
+        existing = c.execute(
+            "SELECT vehicle_id FROM modifications WHERE id=?", (item_id,)
+        ).fetchone()
+        if not existing:
+            raise HTTPException(404, "Modification not found")
+        require_vehicle_edit(get_visible_vehicle(c, existing["vehicle_id"], user), user)
+        require_vehicle_edit(get_visible_vehicle(c, body.vehicle_id, user), user)
+        cur = c.execute(
+            "UPDATE modifications SET vehicle_id=?,name=?,mod_date=?,price=?,torque_specs=?,fluids=?,gotchas=?,youtube_url=?,updated_at=? WHERE id=?",
+            (
+                body.vehicle_id,
+                body.name.strip(),
+                body.date or None,
+                body.price,
+                body.torque_specs.strip(),
+                body.fluids.strip(),
+                body.gotchas.strip(),
+                body.youtube_url.strip(),
+                now_iso(),
+                item_id,
+            ),
+        )
+        if not cur.rowcount:
+            raise HTTPException(404, "Modification not found")
+        return mod_dict(
+            c,
+            c.execute("SELECT * FROM modifications WHERE id=?", (item_id,)).fetchone(),
+        )
+
 
 @app.delete("/api/mods/{item_id}")
-def delete_mod(item_id:int,request:Request):
-    user=current_user(request)
+def delete_mod(item_id: int, request: Request):
+    user = current_user(request)
     with db() as c:
-        entry=c.execute("SELECT vehicle_id FROM modifications WHERE id=?",(item_id,)).fetchone()
-        if not entry: raise HTTPException(404,"Entry not found")
-        require_vehicle_edit(get_visible_vehicle(c,entry["vehicle_id"],user),user)
-        if not c.execute("DELETE FROM modifications WHERE id=?",(item_id,)).rowcount: raise HTTPException(404,"Modification not found")
-    return {"ok":True}
+        entry = c.execute(
+            "SELECT vehicle_id FROM modifications WHERE id=?", (item_id,)
+        ).fetchone()
+        if not entry:
+            raise HTTPException(404, "Entry not found")
+        require_vehicle_edit(get_visible_vehicle(c, entry["vehicle_id"], user), user)
+        if not c.execute("DELETE FROM modifications WHERE id=?", (item_id,)).rowcount:
+            raise HTTPException(404, "Modification not found")
+    return {"ok": True}
+
 
 class ModV1In(BaseModel):
     name: str = Field(min_length=1, max_length=120)
@@ -1316,6 +2252,7 @@ class ModV1In(BaseModel):
     torque_specs: str = Field(default="", max_length=500)
     gotchas: str = Field(default="", max_length=1000)
     youtube_url: str = Field(default="", max_length=500)
+
 
 class ServiceV1In(BaseModel):
     date: str | None = None
@@ -1326,159 +2263,351 @@ class ServiceV1In(BaseModel):
     notes: str = Field(default="", max_length=1000)
     reminder_id: int | None = None
 
+
 @app.get("/api/v1/vehicles")
-def v1_list_vehicles(request: Request, _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
-    token=token_auth(request)
+def v1_list_vehicles(
+    request: Request,
+    _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+):
+    token = token_auth(request)
     with db() as c:
-        user=token_user(c,token)
-        return [vehicle_dict(c, r) for r in c.execute("SELECT * FROM vehicles ORDER BY id") if vehicle_accessible(r,user)]
+        user = token_user(c, token)
+        return [
+            vehicle_dict(c, r)
+            for r in c.execute("SELECT * FROM vehicles ORDER BY id")
+            if vehicle_accessible(r, user)
+        ]
+
 
 @app.get("/api/v1/vehicles/{vehicle_id}/specs")
-def v1_get_specs(vehicle_id:int, request:Request, _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
-    token=token_auth(request)
+def v1_get_specs(
+    vehicle_id: int,
+    request: Request,
+    _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+):
+    token = token_auth(request)
     with db() as c:
-        user=token_user(c,token); get_visible_vehicle(c,vehicle_id,user)
-        return specs_dict(c.execute("SELECT * FROM vehicle_specs WHERE vehicle_id=?",(vehicle_id,)).fetchone())
+        user = token_user(c, token)
+        get_visible_vehicle(c, vehicle_id, user)
+        return specs_dict(
+            c.execute(
+                "SELECT * FROM vehicle_specs WHERE vehicle_id=?", (vehicle_id,)
+            ).fetchone()
+        )
+
 
 @app.put("/api/v1/vehicles/{vehicle_id}/specs")
-def v1_put_specs(vehicle_id:int, body:VehicleSpecsIn, request:Request, _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
-    token=token_auth(request)
+def v1_put_specs(
+    vehicle_id: int,
+    body: VehicleSpecsIn,
+    request: Request,
+    _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+):
+    token = token_auth(request)
     with db() as c:
-        user=token_user(c,token); vehicle=get_visible_vehicle(c,vehicle_id,user)
+        user = token_user(c, token)
+        vehicle = get_visible_vehicle(c, vehicle_id, user)
         require_vehicle_edit(vehicle, user)
-        return save_specs(c,vehicle_id,body)
+        return save_specs(c, vehicle_id, body)
+
 
 @app.get("/api/v1/vehicles/{vehicle_id}/services")
-def v1_list_services(vehicle_id: int, request: Request, _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
-    token=token_auth(request)
+def v1_list_services(
+    vehicle_id: int,
+    request: Request,
+    _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+):
+    token = token_auth(request)
     with db() as c:
-        user=token_user(c,token)
+        user = token_user(c, token)
         get_visible_vehicle(c, vehicle_id, user)
-        rows = c.execute("SELECT * FROM services WHERE vehicle_id=? ORDER BY service_date DESC,id DESC", (vehicle_id,))
+        rows = c.execute(
+            "SELECT * FROM services WHERE vehicle_id=? ORDER BY service_date DESC,id DESC",
+            (vehicle_id,),
+        )
         return [service_dict(c, r) for r in rows]
 
+
 @app.get("/api/v1/vehicles/{vehicle_id}/maintenance")
-def v1_maintenance(vehicle_id: int, request: Request, _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
-    token=token_auth(request)
+def v1_maintenance(
+    vehicle_id: int,
+    request: Request,
+    _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+):
+    token = token_auth(request)
     with db() as c:
-        user=token_user(c,token)
+        user = token_user(c, token)
         v = get_visible_vehicle(c, vehicle_id, user)
         mileage = effective_mileage(c, v)
         out = []
-        for r in c.execute("SELECT * FROM reminders WHERE vehicle_id=? ORDER BY id", (vehicle_id,)):
+        for r in c.execute(
+            "SELECT * FROM reminders WHERE vehicle_id=? ORDER BY id", (vehicle_id,)
+        ):
             st = reminder_status(mileage, r)
-            out.append({**reminder_dict(r), "status": st["state"], "progress": st["progress"], "label": st["label"]})
+            out.append(
+                {
+                    **reminder_dict(r),
+                    "status": st["state"],
+                    "progress": st["progress"],
+                    "label": st["label"],
+                }
+            )
         return out
 
+
 @app.get("/api/v1/vehicles/{vehicle_id}/mods")
-def v1_list_mods(vehicle_id: int, request: Request, _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
-    token=token_auth(request)
+def v1_list_mods(
+    vehicle_id: int,
+    request: Request,
+    _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+):
+    token = token_auth(request)
     with db() as c:
-        user=token_user(c,token)
+        user = token_user(c, token)
         get_visible_vehicle(c, vehicle_id, user)
-        rows=c.execute("SELECT * FROM modifications WHERE vehicle_id=? ORDER BY COALESCE(mod_date,'') DESC,id DESC", (vehicle_id,))
-        return [mod_dict(c,r) for r in rows]
+        rows = c.execute(
+            "SELECT * FROM modifications WHERE vehicle_id=? ORDER BY COALESCE(mod_date,'') DESC,id DESC",
+            (vehicle_id,),
+        )
+        return [mod_dict(c, r) for r in rows]
+
 
 @app.post("/api/v1/vehicles/{vehicle_id}/mods", status_code=201)
-def v1_add_mod(vehicle_id: int, body: ModV1In, request: Request, _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
-    token=token_auth(request); stamp=now_iso()
+def v1_add_mod(
+    vehicle_id: int,
+    body: ModV1In,
+    request: Request,
+    _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+):
+    token = token_auth(request)
+    stamp = now_iso()
     with db() as c:
-        user=token_user(c,token)
+        user = token_user(c, token)
         require_vehicle_edit(get_visible_vehicle(c, vehicle_id, user), user)
-        cur=c.execute("INSERT INTO modifications(vehicle_id,name,mod_date,price,logged_by,torque_specs,fluids,gotchas,youtube_url,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                      (vehicle_id,body.name.strip(),body.date or None,body.price,token["created_by"],body.torque_specs.strip(),"",body.gotchas.strip(),body.youtube_url.strip(),stamp,stamp))
-        return mod_dict(c,c.execute("SELECT * FROM modifications WHERE id=?",(cur.lastrowid,)).fetchone())
+        cur = c.execute(
+            "INSERT INTO modifications(vehicle_id,name,mod_date,price,logged_by,torque_specs,fluids,gotchas,youtube_url,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                vehicle_id,
+                body.name.strip(),
+                body.date or None,
+                body.price,
+                token["created_by"],
+                body.torque_specs.strip(),
+                "",
+                body.gotchas.strip(),
+                body.youtube_url.strip(),
+                stamp,
+                stamp,
+            ),
+        )
+        return mod_dict(
+            c,
+            c.execute(
+                "SELECT * FROM modifications WHERE id=?", (cur.lastrowid,)
+            ).fetchone(),
+        )
+
 
 @app.get("/api/v1/vehicles/{vehicle_id}/fuel")
-def v1_list_fuel(vehicle_id: int, request: Request, _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
-    token=token_auth(request)
+def v1_list_fuel(
+    vehicle_id: int,
+    request: Request,
+    _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+):
+    token = token_auth(request)
     with db() as c:
-        user=token_user(c,token)
+        user = token_user(c, token)
         get_visible_vehicle(c, vehicle_id, user)
         return fuel_rows(c, vehicle_id)
 
+
 @app.post("/api/v1/vehicles/{vehicle_id}/services", status_code=201)
-def v1_add_service(vehicle_id: int, body: ServiceV1In, request: Request, _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
-    token = token_auth(request); stamp = now_iso()
+def v1_add_service(
+    vehicle_id: int,
+    body: ServiceV1In,
+    request: Request,
+    _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+):
+    token = token_auth(request)
+    stamp = now_iso()
     with db() as c:
-        user=token_user(c,token)
+        user = token_user(c, token)
         require_vehicle_edit(get_visible_vehicle(c, vehicle_id, user), user)
-        service_date=body.date or ""
-        reminder_id=apply_reminder_reset(c, vehicle_id, body.reminder_id, service_date, body.mileage)
-        cur = c.execute("""INSERT INTO services(vehicle_id,service_date,mileage,service_type,cost,provider,notes,logged_by,reminder_id,created_at,updated_at)
-          VALUES(?,?,?,?,?,?,?,?,?,?,?)""", (vehicle_id, service_date, body.mileage, body.type.strip(), body.cost, body.provider.strip(), body.notes.strip(), token["created_by"], reminder_id, stamp, stamp))
+        service_date = body.date or ""
+        reminder_id = apply_reminder_reset(
+            c, vehicle_id, body.reminder_id, service_date, body.mileage
+        )
+        cur = c.execute(
+            """INSERT INTO services(vehicle_id,service_date,mileage,service_type,cost,provider,notes,logged_by,reminder_id,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                vehicle_id,
+                service_date,
+                body.mileage,
+                body.type.strip(),
+                body.cost,
+                body.provider.strip(),
+                body.notes.strip(),
+                token["created_by"],
+                reminder_id,
+                stamp,
+                stamp,
+            ),
+        )
         update_vehicle_mileage(c, vehicle_id, body.mileage, token["created_by"], stamp)
-        return service_dict(c, c.execute("SELECT * FROM services WHERE id=?", (cur.lastrowid,)).fetchone())
+        return service_dict(
+            c,
+            c.execute("SELECT * FROM services WHERE id=?", (cur.lastrowid,)).fetchone(),
+        )
+
 
 @app.post("/api/v1/vehicles/{vehicle_id}/fuel", status_code=201)
-async def v1_add_fuel(vehicle_id: int, request: Request, date: str = Form(...), odometer: int = Form(..., ge=0),
-                      gallons: float = Form(..., gt=0), cost: float = Form(0, ge=0), file: UploadFile | None = File(None), _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
-    token = token_auth(request); stamp = now_iso()
+async def v1_add_fuel(
+    vehicle_id: int,
+    request: Request,
+    date: str = Form(...),
+    odometer: int = Form(..., ge=0),
+    gallons: float = Form(..., gt=0),
+    cost: float = Form(0, ge=0),
+    file: UploadFile | None = File(None),
+    _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+):
+    token = token_auth(request)
+    stamp = now_iso()
     data = await file.read() if file else b""
     mime = (file.content_type or "").lower() if file else ""
     if file and data:
         if mime not in RECEIPT_TYPES:
-            raise HTTPException(400, "Receipt photos must be JPEG, PNG, WebP, GIF, or HEIC images")
+            raise HTTPException(
+                400, "Receipt photos must be JPEG, PNG, WebP, GIF, or HEIC images"
+            )
         if len(data) > RECEIPT_MAX_BYTES:
             raise HTTPException(400, "Receipt photos are limited to 10 MB")
     with db() as c:
-        user=token_user(c,token)
+        user = token_user(c, token)
         require_vehicle_edit(get_visible_vehicle(c, vehicle_id, user), user)
-        cur = c.execute("INSERT INTO fuel_entries(vehicle_id,fill_date,odometer,gallons,cost,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
-                        (vehicle_id, date, odometer, gallons, cost, token["created_by"], stamp, stamp))
+        cur = c.execute(
+            "INSERT INTO fuel_entries(vehicle_id,fill_date,odometer,gallons,cost,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+            (
+                vehicle_id,
+                date,
+                odometer,
+                gallons,
+                cost,
+                token["created_by"],
+                stamp,
+                stamp,
+            ),
+        )
         fuel_id = cur.lastrowid
         update_vehicle_mileage(c, vehicle_id, odometer, token["created_by"], stamp)
         receipt = None
         if file and data:
             stored = f"{secrets.token_hex(16)}{RECEIPT_TYPES[mime]}"
             (RECEIPTS_DIR / stored).write_bytes(data)
-            rcur = c.execute("INSERT INTO receipts(kind,entry_id,stored_name,orig_name,mime,size,uploaded_by,created_at) VALUES('fuel',?,?,?,?,?,?,?)",
-                             (fuel_id, stored, (file.filename or "")[:120], mime, len(data), token["created_by"], stamp))
-            receipt = receipt_dict(c, c.execute("SELECT * FROM receipts WHERE id=?", (rcur.lastrowid,)).fetchone())
+            rcur = c.execute(
+                "INSERT INTO receipts(kind,entry_id,stored_name,orig_name,mime,size,uploaded_by,created_at) VALUES('fuel',?,?,?,?,?,?,?)",
+                (
+                    fuel_id,
+                    stored,
+                    (file.filename or "")[:120],
+                    mime,
+                    len(data),
+                    token["created_by"],
+                    stamp,
+                ),
+            )
+            receipt = receipt_dict(
+                c,
+                c.execute(
+                    "SELECT * FROM receipts WHERE id=?", (rcur.lastrowid,)
+                ).fetchone(),
+            )
         entry = one_fuel(c, fuel_id)
         if receipt:
             entry["receipt"] = receipt
         return entry
 
 
-
 class MileageV1In(BaseModel):
     mileage: int = Field(ge=0)
     date: str | None = None
 
+
 @app.put("/api/v1/vehicles/{vehicle_id}/mileage")
-def v1_update_mileage(vehicle_id: int, body: MileageV1In, request: Request, _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
-    token=token_auth(request); stamp=now_iso()
+def v1_update_mileage(
+    vehicle_id: int,
+    body: MileageV1In,
+    request: Request,
+    _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+):
+    token = token_auth(request)
+    stamp = now_iso()
     with db() as c:
-        user=token_user(c,token)
+        user = token_user(c, token)
         require_vehicle_edit(get_visible_vehicle(c, vehicle_id, user), user)
-        c.execute("UPDATE vehicles SET mileage=?,updated_at=? WHERE id=?", (body.mileage, stamp, vehicle_id))
-        c.execute("INSERT INTO mileage_updates(vehicle_id,mileage,recorded_by,recorded_at) VALUES(?,?,?,?)",
-                  (vehicle_id,body.mileage,token["created_by"],stamp))
-        return vehicle_dict(c, c.execute("SELECT * FROM vehicles WHERE id=?", (vehicle_id,)).fetchone())
+        c.execute(
+            "UPDATE vehicles SET mileage=?,updated_at=? WHERE id=?",
+            (body.mileage, stamp, vehicle_id),
+        )
+        c.execute(
+            "INSERT INTO mileage_updates(vehicle_id,mileage,recorded_by,recorded_at) VALUES(?,?,?,?)",
+            (vehicle_id, body.mileage, token["created_by"], stamp),
+        )
+        return vehicle_dict(
+            c, c.execute("SELECT * FROM vehicles WHERE id=?", (vehicle_id,)).fetchone()
+        )
+
 
 class NoteV1In(BaseModel):
     date: str
     body: str = Field(min_length=1, max_length=2000)
 
+
 @app.get("/api/v1/vehicles/{vehicle_id}/notes")
-def v1_list_notes(vehicle_id: int, request: Request, _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
-    token=token_auth(request)
+def v1_list_notes(
+    vehicle_id: int,
+    request: Request,
+    _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+):
+    token = token_auth(request)
     with db() as c:
-        user=token_user(c,token)
+        user = token_user(c, token)
         get_visible_vehicle(c, vehicle_id, user)
-        rows = c.execute("SELECT * FROM notes WHERE vehicle_id=? ORDER BY note_date DESC,id DESC", (vehicle_id,))
+        rows = c.execute(
+            "SELECT * FROM notes WHERE vehicle_id=? ORDER BY note_date DESC,id DESC",
+            (vehicle_id,),
+        )
         return [note_dict(c, r) for r in rows]
 
+
 @app.post("/api/v1/vehicles/{vehicle_id}/notes", status_code=201)
-def v1_add_note(vehicle_id: int, body: NoteV1In, request: Request, _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
-    token = token_auth(request); stamp = now_iso()
+def v1_add_note(
+    vehicle_id: int,
+    body: NoteV1In,
+    request: Request,
+    _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+):
+    token = token_auth(request)
+    stamp = now_iso()
     with db() as c:
-        user=token_user(c,token)
+        user = token_user(c, token)
         require_vehicle_edit(get_visible_vehicle(c, vehicle_id, user), user)
-        cur = c.execute("INSERT INTO notes(vehicle_id,note_date,body,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?)",
-                        (vehicle_id, body.date, body.body.strip(), token["created_by"], stamp, stamp))
-        return note_dict(c, c.execute("SELECT * FROM notes WHERE id=?", (cur.lastrowid,)).fetchone())
+        cur = c.execute(
+            "INSERT INTO notes(vehicle_id,note_date,body,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+            (
+                vehicle_id,
+                body.date,
+                body.body.strip(),
+                token["created_by"],
+                stamp,
+                stamp,
+            ),
+        )
+        return note_dict(
+            c, c.execute("SELECT * FROM notes WHERE id=?", (cur.lastrowid,)).fetchone()
+        )
+
 
 def send_notification(urls: str, title: str, body: str) -> tuple[bool, str]:
     targets = urls.split()
@@ -1488,8 +2617,11 @@ def send_notification(urls: str, title: str, body: str) -> tuple[bool, str]:
     errors: list[str] = []
     for url in webhook_urls:
         try:
-            req = urllib.request.Request(url, data=json.dumps({"title": title, "body": body}).encode(),
-                                         headers={"Content-Type": "application/json"})
+            req = urllib.request.Request(
+                url,
+                data=json.dumps({"title": title, "body": body}).encode(),
+                headers={"Content-Type": "application/json"},
+            )
             with urllib.request.urlopen(req, timeout=10) as resp:
                 ok = ok or resp.status < 400
         except Exception as exc:
@@ -1498,7 +2630,9 @@ def send_notification(urls: str, title: str, body: str) -> tuple[bool, str]:
         try:
             import apprise
         except ImportError:
-            errors.append("apprise is not installed; only http(s) webhook URLs work without it")
+            errors.append(
+                "apprise is not installed; only http(s) webhook URLs work without it"
+            )
         else:
             ap = apprise.Apprise()
             for url in apprise_urls:
@@ -1509,6 +2643,7 @@ def send_notification(urls: str, title: str, body: str) -> tuple[bool, str]:
                 errors.append("apprise delivery failed; check the URL and its service")
     return ok, "; ".join(errors)
 
+
 def due_maintenance_items(c) -> list[dict[str, Any]]:
     items = []
     for v in c.execute("SELECT * FROM vehicles"):
@@ -1516,8 +2651,17 @@ def due_maintenance_items(c) -> list[dict[str, Any]]:
         for r in c.execute("SELECT * FROM reminders WHERE vehicle_id=?", (v["id"],)):
             st = reminder_status(mileage, r)
             if st["state"] in ("soon", "overdue"):
-                items.append({"reminder_id": r["id"], "vehicle": v["name"], "item": r["name"], "state": st["state"], "label": st["label"]})
+                items.append(
+                    {
+                        "reminder_id": r["id"],
+                        "vehicle": v["name"],
+                        "item": r["name"],
+                        "state": st["state"],
+                        "label": st["label"],
+                    }
+                )
     return items
+
 
 def run_notification_check() -> bool:
     with db() as c:
@@ -1525,7 +2669,9 @@ def run_notification_check() -> bool:
         urls = row["value"] if row else ""
         if not urls.strip():
             return False
-        row = c.execute("SELECT value FROM settings WHERE key='notify_state'").fetchone()
+        row = c.execute(
+            "SELECT value FROM settings WHERE key='notify_state'"
+        ).fetchone()
         try:
             known = json.loads(row["value"]) if row else {}
         except json.JSONDecodeError:
@@ -1533,30 +2679,48 @@ def run_notification_check() -> bool:
         items = due_maintenance_items(c)
         fresh = [i for i in items if known.get(str(i["reminder_id"])) != i["state"]]
         if fresh:
-            name_row = c.execute("SELECT value FROM settings WHERE key='garage_name'").fetchone()
+            name_row = c.execute(
+                "SELECT value FROM settings WHERE key='garage_name'"
+            ).fetchone()
             title = f"{name_row['value'] if name_row else 'Garage'}: maintenance due"
-            body = "\n".join(f"{'OVERDUE' if i['state'] == 'overdue' else 'Due soon'}: {i['vehicle']} - {i['item']} ({i['label']})" for i in fresh)
+            body = "\n".join(
+                f"{'OVERDUE' if i['state'] == 'overdue' else 'Due soon'}: {i['vehicle']} - {i['item']} ({i['label']})"
+                for i in fresh
+            )
             ok, detail = send_notification(urls, title, body)
             if not ok:
                 raise RuntimeError(detail or "notification delivery failed")
         current = {str(i["reminder_id"]): i["state"] for i in items}
-        c.execute("INSERT INTO settings(key,value) VALUES('notify_state',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(current),))
-        c.execute("INSERT INTO settings(key,value) VALUES('notify_last_check',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (datetime.now(timezone.utc).date().isoformat(),))
+        c.execute(
+            "INSERT INTO settings(key,value) VALUES('notify_state',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (json.dumps(current),),
+        )
+        c.execute(
+            "INSERT INTO settings(key,value) VALUES('notify_last_check',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (datetime.now(timezone.utc).date().isoformat(),),
+        )
         return bool(fresh)
+
 
 def notification_worker():
     while True:
         try:
             with db() as c:
-                row = c.execute("SELECT value FROM settings WHERE key='notify_last_check'").fetchone()
-            if (row["value"] if row else None) != datetime.now(timezone.utc).date().isoformat():
+                row = c.execute(
+                    "SELECT value FROM settings WHERE key='notify_last_check'"
+                ).fetchone()
+            if (row["value"] if row else None) != datetime.now(
+                timezone.utc
+            ).date().isoformat():
                 run_notification_check()
         except Exception as exc:
             print(f"notification check failed: {exc}")
         time.sleep(3600)
 
+
 class NotificationSettingsIn(BaseModel):
     apprise_urls: str = Field(default="", max_length=2000)
+
 
 @app.get("/api/notifications")
 def get_notification_settings(request: Request):
@@ -1565,15 +2729,22 @@ def get_notification_settings(request: Request):
         row = c.execute("SELECT value FROM settings WHERE key='notify_urls'").fetchone()
     return {"apprise_urls": row["value"] if row else ""}
 
+
 @app.put("/api/notifications")
 def update_notification_settings(body: NotificationSettingsIn, request: Request):
     current_user(request, True)
     urls = body.apprise_urls.strip()
     if any("://" not in u for u in urls.split()):
-        raise HTTPException(400, "Each notification URL needs a scheme, like tgram:// or https://")
+        raise HTTPException(
+            400, "Each notification URL needs a scheme, like tgram:// or https://"
+        )
     with db() as c:
-        c.execute("INSERT INTO settings(key,value) VALUES('notify_urls',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (urls,))
+        c.execute(
+            "INSERT INTO settings(key,value) VALUES('notify_urls',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (urls,),
+        )
     return {"apprise_urls": urls}
+
 
 @app.post("/api/notifications/test")
 def send_test_notification(request: Request):
@@ -1583,58 +2754,129 @@ def send_test_notification(request: Request):
     urls = row["value"] if row else ""
     if not urls.strip():
         raise HTTPException(400, "Add at least one notification URL first")
-    ok, detail = send_notification(urls, "Garage: test notification", "Notifications are working. Maintenance alerts will arrive here.")
+    ok, detail = send_notification(
+        urls,
+        "Garage: test notification",
+        "Notifications are working. Maintenance alerts will arrive here.",
+    )
     if not ok:
         raise HTTPException(502, detail or "Notification delivery failed")
     return {"ok": True}
 
-BACKUP_TABLES = ("settings", "users", "vehicles", "vehicle_specs", "services", "fuel_entries", "notes", "modifications", "receipts", "mileage_updates", "reminders")
-BACKUP_DELETE_ORDER = ("receipts", "services", "vehicle_specs", "fuel_entries", "notes", "modifications", "mileage_updates", "reminders", "vehicles", "users", "settings")
+
+BACKUP_TABLES = (
+    "settings",
+    "users",
+    "vehicles",
+    "vehicle_specs",
+    "services",
+    "fuel_entries",
+    "notes",
+    "modifications",
+    "receipts",
+    "mileage_updates",
+    "reminders",
+)
+BACKUP_DELETE_ORDER = (
+    "receipts",
+    "services",
+    "vehicle_specs",
+    "fuel_entries",
+    "notes",
+    "modifications",
+    "mileage_updates",
+    "reminders",
+    "vehicles",
+    "users",
+    "settings",
+)
+
 
 @app.get("/api/export")
-def export_data(request:Request):
+def export_data(request: Request):
     current_user(request, True)
     import base64
-    with db() as c: tables={name:[dict(r) for r in c.execute(f"SELECT * FROM {name}")] for name in BACKUP_TABLES}
-    files={}
+
+    with db() as c:
+        tables = {
+            name: [dict(r) for r in c.execute(f"SELECT * FROM {name}")]
+            for name in BACKUP_TABLES
+        }
+    files = {}
     for r in tables["receipts"]:
-        path=RECEIPTS_DIR/r["stored_name"]
-        if path.is_file(): files[r["stored_name"]]=base64.b64encode(path.read_bytes()).decode("ascii")
-    return {"version":3,"exported_at":now_iso(),"tables":tables,"receipt_files":files}
+        path = RECEIPTS_DIR / r["stored_name"]
+        if path.is_file():
+            files[r["stored_name"]] = base64.b64encode(path.read_bytes()).decode(
+                "ascii"
+            )
+    return {
+        "version": 3,
+        "exported_at": now_iso(),
+        "tables": tables,
+        "receipt_files": files,
+    }
+
 
 @app.post("/api/import")
-def import_data(payload:dict[str,Any],request:Request):
+def import_data(payload: dict[str, Any], request: Request):
     current_user(request, True)
     import base64
-    if payload.get("version") != 3 or not isinstance(payload.get("tables"),dict) or not isinstance(payload.get("receipt_files",{}),dict): raise HTTPException(400,"Only complete version 3 backups can be restored")
-    tables=payload["tables"]
-    if any(not isinstance(tables.get(name),list) for name in BACKUP_TABLES): raise HTTPException(400,"Backup is missing a required table")
-    with db() as c: schema={name:[r["name"] for r in c.execute(f"PRAGMA table_info({name})")] for name in BACKUP_TABLES}
-    for name in BACKUP_TABLES:
-        allowed=set(schema[name])
-        if any(not isinstance(row,dict) or not set(row).issubset(allowed) for row in tables[name]): raise HTTPException(400,f"Invalid {name} rows")
-    staged={}
-    try:
-        for stored,encoded in payload.get("receipt_files",{}).items():
-            if not isinstance(stored,str) or Path(stored).name != stored: raise ValueError("Invalid receipt filename")
-            staged[stored]=base64.b64decode(encoded,validate=True)
-    except (ValueError,TypeError): raise HTTPException(400,"Invalid receipt file data")
+
+    if (
+        payload.get("version") != 3
+        or not isinstance(payload.get("tables"), dict)
+        or not isinstance(payload.get("receipt_files", {}), dict)
+    ):
+        raise HTTPException(400, "Only complete version 3 backups can be restored")
+    tables = payload["tables"]
+    if any(not isinstance(tables.get(name), list) for name in BACKUP_TABLES):
+        raise HTTPException(400, "Backup is missing a required table")
     with db() as c:
-        for name in BACKUP_DELETE_ORDER: c.execute(f"DELETE FROM {name}")
+        schema = {
+            name: [r["name"] for r in c.execute(f"PRAGMA table_info({name})")]
+            for name in BACKUP_TABLES
+        }
+    for name in BACKUP_TABLES:
+        allowed = set(schema[name])
+        if any(
+            not isinstance(row, dict) or not set(row).issubset(allowed)
+            for row in tables[name]
+        ):
+            raise HTTPException(400, f"Invalid {name} rows")
+    staged = {}
+    try:
+        for stored, encoded in payload.get("receipt_files", {}).items():
+            if not isinstance(stored, str) or Path(stored).name != stored:
+                raise ValueError("Invalid receipt filename")
+            staged[stored] = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError):
+        raise HTTPException(400, "Invalid receipt file data")
+    with db() as c:
+        for name in BACKUP_DELETE_ORDER:
+            c.execute(f"DELETE FROM {name}")
         for name in BACKUP_TABLES:
-            cols=schema[name]
+            cols = schema[name]
             for row in tables[name]:
-                present=[col for col in cols if col in row];marks=','.join('?' for _ in present)
-                c.execute(f"INSERT INTO {name} ({','.join(present)}) VALUES ({marks})",tuple(row[col] for col in present))
+                present = [col for col in cols if col in row]
+                marks = ",".join("?" for _ in present)
+                c.execute(
+                    f"INSERT INTO {name} ({','.join(present)}) VALUES ({marks})",
+                    tuple(row[col] for col in present),
+                )
         migrate_header_fields(c)  # backups from before specs owned fuel/tire/oil
     for path in RECEIPTS_DIR.iterdir():
-        if path.is_file(): path.unlink()
-    for stored,data in staged.items(): (RECEIPTS_DIR/stored).write_bytes(data)
-    return {"ok":True,"version":3,"vehicles":len(tables["vehicles"])}
+        if path.is_file():
+            path.unlink()
+    for stored, data in staged.items():
+        (RECEIPTS_DIR / stored).write_bytes(data)
+    return {"ok": True, "version": 3, "vehicles": len(tables["vehicles"])}
 
-app.mount("/static",StaticFiles(directory=BASE/"static"),name="static")
 
-@app.get("/{path:path}",include_in_schema=False)
-def frontend(path:str):
-    if path.startswith("api/"): raise HTTPException(404)
-    return FileResponse(BASE/"static"/"index.html")
+app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
+
+
+@app.get("/{path:path}", include_in_schema=False)
+def frontend(path: str):
+    if path.startswith("api/"):
+        raise HTTPException(404)
+    return FileResponse(BASE / "static" / "index.html")
