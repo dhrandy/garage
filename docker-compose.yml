@@ -8,5 +8,9 @@ services:
       - ./data:/app/data
     environment:
       - TZ=${TZ:-UTC}
+      # Set to true once Garage is served over HTTPS (reverse proxy).
+      - GARAGE_COOKIE_SECURE=${GARAGE_COOKIE_SECURE:-false}
+      # IP of your reverse proxy, so login rate limits see real client addresses.
+      - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-127.0.0.1}
     ports:
       - 8917:8000
