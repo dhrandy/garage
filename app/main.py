@@ -379,7 +379,9 @@ def set_session(response: Response, user_id: int):
                         secure=os.getenv("GARAGE_COOKIE_SECURE", "false").lower() == "true", path="/")
 
 def vehicle_accessible(row: sqlite3.Row, user: sqlite3.Row) -> bool:
-    return bool(not row["private"] or row["owner_id"] == user["id"] or (user["is_admin"] and user["show_all_vehicles"]))
+    if not user["is_admin"]:
+        return row["owner_id"] == user["id"]
+    return bool(not row["private"] or row["owner_id"] == user["id"] or user["show_all_vehicles"])
 
 def get_visible_vehicle(c: sqlite3.Connection, vehicle_id: int, user: sqlite3.Row) -> sqlite3.Row:
     row = c.execute("SELECT * FROM vehicles WHERE id=?", (vehicle_id,)).fetchone()
