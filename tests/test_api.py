@@ -1,4 +1,5 @@
 import os
+import json
 from pathlib import Path
 
 os.environ["GARAGE_DATA_DIR"] = "/tmp/garage-pytest-data"
@@ -1209,16 +1210,16 @@ def test_vehicle_specs_and_mod_install_notes(tmp_path):
         vehicle = admin.post(
             "/api/vehicles",
             json={
-                "name": "Miata",
+                "name": "Test Coupe",
                 "fuel_type": "Premium gasoline",
-                "tire_size": "205/45R17",
-                "oil_spec": "5W-30, 4.8 qt",
+                "tire_size": "215/60R16",
+                "oil_spec": "5W-30, 5 qt",
             },
         ).json()
         assert (
             vehicle["fuel_type"] == "Premium gasoline"
-            and vehicle["tire_size"] == "205/45R17"
-            and vehicle["oil_spec"] == "5W-30, 4.8 qt"
+            and vehicle["tire_size"] == "215/60R16"
+            and vehicle["oil_spec"] == "5W-30, 5 qt"
         )
         vehicle = admin.put(
             f"/api/vehicles/{vehicle['id']}", json={**vehicle, "oil_spec": ""}
@@ -1763,8 +1764,14 @@ def test_swagger_docs_csp_allows_required_assets(tmp_path):
     main.DB_PATH = tmp_path / "docs.db"
     main.init_db()
     with TestClient(main.app) as client:
+        assert client.get("/api/docs").status_code == 401
+        assert client.get("/api/openapi.json").status_code == 401
+        client.post(
+            "/api/setup", json={"username": "admin", "password": "password-123"}
+        )
         docs = client.get("/api/docs")
         assert docs.status_code == 200 and "Swagger UI" in docs.text
+        assert client.get("/api/openapi.json").json()["info"]["title"] == "Garage"
         csp = docs.headers["content-security-policy"]
         assert (
             "https://cdn.jsdelivr.net" in csp and "https://fastapi.tiangolo.com" in csp
@@ -2569,7 +2576,7 @@ def test_tire_size_and_fuel_type_are_spec_fields_that_drive_header_chips(tmp_pat
             "/api/vehicles/1/specs",
             json={
                 "wheel_size": "18 × 7.5 in",
-                "tire_size": " 265/60R18 ",
+                "tire_size": " 225/75R16 ",
                 "wheel_lug_torque": "150 lb-ft",
                 "fuel_type": "Regular gasoline",
                 "oil_type": "5W-30",
@@ -2577,13 +2584,13 @@ def test_tire_size_and_fuel_type_are_spec_fields_that_drive_header_chips(tmp_pat
             },
         ).json()
         assert (
-            saved["tire_size"] == "265/60R18"
+            saved["tire_size"] == "225/75R16"
             and saved["wheel_size"] == "18 × 7.5 in"
             and saved["fuel_type"] == "Regular gasoline"
         )
         vehicle = admin.get("/api/vehicles").json()[0]
         assert (vehicle["tire_size"], vehicle["fuel_type"], vehicle["oil_spec"]) == (
-            "265/60R18",
+            "225/75R16",
             "Regular gasoline",
             "5W-30, 6 qt",
         )
@@ -2597,7 +2604,7 @@ def test_tire_size_and_fuel_type_are_spec_fields_that_drive_header_chips(tmp_pat
             },
         ).json()
         assert (
-            kept["tire_size"] == "265/60R18"
+            kept["tire_size"] == "225/75R16"
             and kept["fuel_type"] == "Regular gasoline"
             and kept["wheel_size"] == "18 × 8 in"
         )
@@ -2641,19 +2648,19 @@ def test_tire_size_and_fuel_type_are_spec_fields_that_drive_header_chips(tmp_pat
             "/api/vehicles/1",
             json={
                 **body,
-                "tire_size": "205/45 R17",
+                "tire_size": "195/65 R15",
                 "oil_spec": "0W-20, 4.4 qt",
                 "fuel_type": "Premium gasoline",
             },
         ).json()
         assert (after["tire_size"], after["oil_spec"], after["fuel_type"]) == (
-            "205/45 R17",
+            "195/65 R15",
             "0W-20, 4.4 qt",
             "Premium gasoline",
         )
         specs = admin.get("/api/vehicles/1/specs").json()
         assert (specs["tire_size"], specs["oil_type"], specs["oil_capacity"]) == (
-            "205/45 R17",
+            "195/65 R15",
             "0W-20",
             "4.4 qt",
         )
@@ -2675,7 +2682,7 @@ def test_tire_size_and_fuel_type_are_spec_fields_that_drive_header_chips(tmp_pat
 
 
 def test_split_oil_spec_uses_existing_text_only():
-    assert main.split_oil_spec("0W-20, 5.3 qt") == ("0W-20", "5.3 qt")
+    assert main.split_oil_spec("0W-20, 4.0 qt") == ("0W-20", "4.0 qt")
     assert main.split_oil_spec("5W-30, 6 L") == ("5W-30", "6 L")
     assert main.split_oil_spec("5W-30") == ("5W-30", "")
     assert main.split_oil_spec("Full synthetic, see manual") == (
@@ -2712,8 +2719,8 @@ def test_startup_migrates_vehicle_level_header_values_into_specs(tmp_path):
             json={"tire_size": "225/40R18", "oil_type": "5W-30"},
         )
     # simulate a database written by the previous release: values only at vehicle level
-    _legacy_header(truck, "Regular gasoline", "265/60R18", "5W-30, 6 qt")
-    _legacy_header(roadster, "Premium gasoline", "205/45 R17", "0W-20")
+    _legacy_header(truck, "Regular gasoline", "225/75R16", "5W-30, 6 qt")
+    _legacy_header(roadster, "Premium gasoline", "195/65 R15", "0W-20")
     _legacy_header(clash, "", "225/45R17", "0W-20, 4 qt")
     main.init_db()
     with TestClient(main.app) as admin:
@@ -2723,22 +2730,22 @@ def test_startup_migrates_vehicle_level_header_values_into_specs(tmp_path):
             vehicles[truck]["tire_size"],
             vehicles[truck]["fuel_type"],
             vehicles[truck]["oil_spec"],
-        ) == ("265/60R18", "Regular gasoline", "5W-30, 6 qt")
+        ) == ("225/75R16", "Regular gasoline", "5W-30, 6 qt")
         assert (
             vehicles[roadster]["tire_size"],
             vehicles[roadster]["fuel_type"],
             vehicles[roadster]["oil_spec"],
-        ) == ("205/45 R17", "Premium gasoline", "0W-20, 4.5 qt")
+        ) == ("195/65 R15", "Premium gasoline", "0W-20, 4.5 qt")
         truck_specs = admin.get(f"/api/vehicles/{truck}/specs").json()
         assert (
             truck_specs["tire_size"],
             truck_specs["oil_type"],
             truck_specs["oil_capacity"],
-        ) == ("265/60R18", "5W-30", "6 qt")
+        ) == ("225/75R16", "5W-30", "6 qt")
         roadster_specs = admin.get(f"/api/vehicles/{roadster}/specs").json()
         assert (
             roadster_specs["wheel_size"] == "17 × 7 in"
-            and roadster_specs["tire_size"] == "205/45 R17"
+            and roadster_specs["tire_size"] == "195/65 R15"
         )
         # a different value already in specs wins, and the old header value is kept as a note
         assert (
@@ -2783,7 +2790,7 @@ def test_importing_a_pre_migration_backup_moves_header_values_into_specs(tmp_pat
         row = next(r for r in backup["tables"]["vehicles"] if r["id"] == vid)
         row.update(
             fuel_type="Premium gasoline",
-            tire_size="205/45 R17",
+            tire_size="195/65 R15",
             oil_spec="0W-20, 4.4 qt",
         )
         backup["tables"]["vehicle_specs"] = [
@@ -2794,10 +2801,208 @@ def test_importing_a_pre_migration_backup_moves_header_values_into_specs(tmp_pat
         admin.post("/api/login", json={"username": "admin", "password": "password-123"})
         v = next(v for v in admin.get("/api/vehicles").json() if v["id"] == vid)
         assert (v["tire_size"], v["fuel_type"], v["oil_spec"]) == (
-            "205/45 R17",
+            "195/65 R15",
             "Premium gasoline",
             "0W-20, 4.4 qt",
         )
         assert (
-            admin.get(f"/api/vehicles/{vid}/specs").json()["tire_size"] == "205/45 R17"
+            admin.get(f"/api/vehicles/{vid}/specs").json()["tire_size"] == "195/65 R15"
         )
+
+
+def test_import_rejects_receipt_paths_outside_receipts_folder(tmp_path):
+    main.DB_PATH = tmp_path / "import-paths.db"
+    main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post("/api/setup", json={"username": "admin", "password": "password-123"})
+        backup = admin.get("/api/export").json()
+        vid = backup["tables"]["vehicles"][0]["id"]
+        for bad in ("/etc/passwd", "../garage.db", "..", "a/b.png"):
+            evil = json.loads(json.dumps(backup))
+            evil["tables"]["receipts"] = [
+                {
+                    "id": 99,
+                    "kind": "vehicle",
+                    "entry_id": vid,
+                    "stored_name": bad,
+                    "orig_name": "x",
+                    "mime": "image/png",
+                    "size": 1,
+                    "uploaded_by": 1,
+                    "created_at": "x",
+                }
+            ]
+            assert admin.post("/api/import", json=evil).status_code == 400
+            assert admin.get("/api/receipts/99").status_code == 404
+        evil = json.loads(json.dumps(backup))
+        evil["receipt_files"] = {"..": "AA=="}
+        assert admin.post("/api/import", json=evil).status_code == 400
+
+
+def test_import_restores_with_tokens_and_vehicle_photo(tmp_path):
+    main.DB_PATH = tmp_path / "import-fk.db"
+    main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post("/api/setup", json={"username": "admin", "password": "password-123"})
+        vid = admin.get("/api/vehicles").json()[0]["id"]
+        assert (
+            admin.post(
+                f"/api/vehicles/{vid}/photo",
+                files={"file": ("car.png", PNG_BYTES, "image/png")},
+            ).status_code
+            == 201
+        )
+        token = admin.post("/api/tokens", json={"name": "phone"}).json()["token"]
+        backup = admin.get("/api/export").json()
+        assert backup["tables"]["api_tokens"]
+        restored = admin.post("/api/import", json=backup)
+        assert restored.status_code == 200, restored.text
+        admin.post("/api/login", json={"username": "admin", "password": "password-123"})
+        vehicle = admin.get("/api/vehicles").json()[0]
+        assert (
+            vehicle["photo_url"] and admin.get(vehicle["photo_url"]).status_code == 200
+        )
+        assert (
+            admin.get(
+                "/api/v1/vehicles", headers={"Authorization": f"Bearer {token}"}
+            ).status_code
+            == 200
+        )
+        legacy = json.loads(json.dumps(backup))
+        del legacy["tables"]["api_tokens"]
+        assert admin.post("/api/import", json=legacy).status_code == 200
+
+
+def test_malformed_dates_are_rejected_and_never_break_lists(tmp_path):
+    main.DB_PATH = tmp_path / "dates.db"
+    main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post("/api/setup", json={"username": "admin", "password": "password-123"})
+        vid = admin.get("/api/vehicles").json()[0]["id"]
+        bad = "<script>"
+        assert (
+            admin.post(
+                "/api/fuel",
+                json={"vehicle_id": vid, "date": bad, "odometer": 1, "gallons": 1},
+            ).status_code
+            == 422
+        )
+        assert (
+            admin.post(
+                "/api/notes", json={"vehicle_id": vid, "date": bad, "body": "x"}
+            ).status_code
+            == 422
+        )
+        assert (
+            admin.post(
+                "/api/reminders",
+                json={
+                    "vehicle_id": vid,
+                    "name": "r",
+                    "months_interval": 6,
+                    "last_date": bad,
+                },
+            ).status_code
+            == 422
+        )
+        assert (
+            admin.post(
+                "/api/services",
+                json={"vehicle_id": vid, "type": "oil", "date": "2026-02-30"},
+            ).status_code
+            == 422
+        )
+        assert (
+            admin.post(
+                "/api/services", json={"vehicle_id": vid, "type": "oil", "date": ""}
+            ).status_code
+            == 200
+        )
+        token = admin.post("/api/tokens", json={"name": "t"}).json()["token"]
+        auth = {"Authorization": f"Bearer {token}"}
+        assert (
+            admin.post(
+                f"/api/v1/vehicles/{vid}/fuel",
+                headers=auth,
+                data={"date": "yesterday", "odometer": "5", "gallons": "2"},
+            ).status_code
+            == 422
+        )
+        # Rows written by older versions with bad dates must not take the app down.
+        with main.db() as c:
+            stamp = main.now_iso()
+            c.execute(
+                "INSERT INTO fuel_entries(vehicle_id,fill_date,odometer,gallons,cost,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                (vid, bad, 10, 1, 0, 1, stamp, stamp),
+            )
+            c.execute(
+                "INSERT INTO reminders(vehicle_id,name,months_interval,last_date,due_date,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                (vid, "old", 6, bad, "nope", stamp, stamp),
+            )
+        assert admin.get("/api/vehicles").status_code == 200
+        assert admin.get("/api/v1/vehicles", headers=auth).status_code == 200
+        assert (
+            admin.get(f"/api/v1/vehicles/{vid}/maintenance", headers=auth).status_code
+            == 200
+        )
+        with main.db() as c:
+            main.due_maintenance_items(c)
+
+
+def test_video_links_must_be_http(tmp_path):
+    main.DB_PATH = tmp_path / "urls.db"
+    main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post("/api/setup", json={"username": "admin", "password": "password-123"})
+        vid = admin.get("/api/vehicles").json()[0]["id"]
+        for route, body in (
+            ("/api/services", {"vehicle_id": vid, "type": "oil"}),
+            ("/api/mods", {"vehicle_id": vid, "name": "intake"}),
+        ):
+            assert (
+                admin.post(
+                    route, json={**body, "youtube_url": "javascript:alert(1)"}
+                ).status_code
+                == 422
+            )
+            assert admin.post(
+                route, json={**body, "youtube_url": "https://example.com/v"}
+            ).status_code in (200, 201)
+
+
+def test_password_change_ends_other_sessions_and_revoked_tokens_fail(tmp_path):
+    main.DB_PATH = tmp_path / "pw.db"
+    main.init_db()
+    with TestClient(main.app) as admin, TestClient(main.app) as member:
+        admin.post("/api/setup", json={"username": "admin", "password": "password-123"})
+        uid = admin.post(
+            "/api/users", json={"username": "member", "password": "password-123"}
+        ).json()["id"]
+        member.post(
+            "/api/login", json={"username": "member", "password": "password-123"}
+        )
+        assert member.get("/api/me").status_code == 200
+        admin.put(f"/api/users/{uid}", json={"password": "new-password-1"})
+        assert member.get("/api/me").status_code == 401
+        token = admin.post("/api/tokens", json={"name": "t"}).json()["token"]
+        with main.db() as c:
+            c.execute("UPDATE api_tokens SET revoked=1")
+        assert (
+            admin.get(
+                "/api/v1/vehicles", headers={"Authorization": f"Bearer {token}"}
+            ).status_code
+            == 401
+        )
+
+
+def test_uploads_over_limit_are_rejected(tmp_path):
+    main.DB_PATH = tmp_path / "upload.db"
+    main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post("/api/setup", json={"username": "admin", "password": "password-123"})
+        vid = admin.get("/api/vehicles").json()[0]["id"]
+        big = b"0" * (main.RECEIPT_MAX_BYTES + 1)
+        r = admin.post(
+            f"/api/vehicles/{vid}/photo", files={"file": ("big.png", big, "image/png")}
+        )
+        assert r.status_code == 400 and "10 MB" in r.json()["detail"]
