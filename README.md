@@ -4,7 +4,7 @@
 
 Garage is in beta. Things may change between versions - features, data formats, and APIs can shift until a stable release.
 
-Garage is a simple vehicle maintenance tracker. It is self-hosted and multi-user. One shared garage keeps vehicle mileage, service history, maintenance reminders, and costs in sync across phones and computers. It runs as one Docker container with SQLite storage.
+Garage is a simple vehicle maintenance tracker. It is self-hosted and multi-user. Each person gets their own garage view with vehicle mileage, service history, maintenance reminders, and costs in sync across phones and computers. It runs as one Docker container with SQLite storage.
 
 ## Quick start
 
@@ -80,9 +80,13 @@ Service entries and fill-ups can carry receipt photos. Use the receipt field whe
 
 ## Users
 
-Administrators can open **Users** from the top bar to create users, change usernames, reset passwords, grant or remove administrator access, and deactivate accounts. All active users see the same garage. Every vehicle and service entry records the user who added or logged it. Non-administrators cannot manage users.
+Administrators can open **Users** from the top bar to create users, change usernames, reset passwords, grant or remove administrator access, and deactivate accounts. Non-administrators cannot manage users.
 
-Every vehicle has an owner, chosen when the vehicle is added; administrators can reassign ownership from the vehicle's **Edit** form. Administrators can edit every vehicle and everything on it. A non-administrator can edit only their own vehicles — specs, services, fill-ups, maintenance items, modifications, notes, receipts, mileage, and photo — and sees everyone else's vehicles read-only: the data stays visible, but the edit buttons are hidden and the API rejects changes with `403`.
+Visibility is per person: a non-administrator sees only their own vehicles - in the vehicle list, on the dashboard, and in every vehicle-scoped view (services, fuel, costs, reminders, notes, mods, receipts). Other people's vehicles are invisible to them, and the API answers `404` for them as if they did not exist. Administrators see every vehicle, subject to the **Private** flag below, and can turn on **Show all vehicles** in the top-bar menu to reveal private ones.
+
+Every vehicle has an owner, chosen when the vehicle is added; administrators can reassign ownership from the vehicle's **Edit** form. Administrators can edit every vehicle and everything on it. A non-administrator can edit only their own vehicles — specs, services, fill-ups, maintenance items, modifications, notes, receipts, mileage, and photo — and has no access to anyone else's.
+
+A vehicle marked **Private** is hidden even from administrators unless they turn on **Show all vehicles**. The flag works as an extra layer within the per-person visibility above; for non-administrators it only affects their own vehicles.
 
 ## Port
 
@@ -111,7 +115,7 @@ A plain `http(s)://` URL receives a JSON webhook POST instead (`{"title": ..., "
 
 Scripts and integrations can use token-authenticated REST endpoints under `/api/v1`. Administrators create named tokens in **Settings → API tokens**. The full token is shown once at creation; Garage stores only its SHA-256 hash. Revoking a token disables it immediately. Interactive OpenAPI docs are at `/api/docs` on your server.
 
-Token requests act as the user who created the token, so the ownership rule applies to scripts too: write endpoints return `403` for vehicles the token's creator does not own unless that user is an administrator.
+Token requests act as the user who created the token, so the visibility and ownership rules apply to scripts too: a token sees exactly the vehicles its creator can see, and write endpoints reject vehicles the creator may not edit.
 
 Send the token as a bearer header:
 
@@ -255,4 +259,4 @@ The browser uses a JSON REST API under `/api`. Authentication is cookie-based.
 - `GET/PUT /api/notifications`, `POST /api/notifications/test` (administrator only)
 - `/api/v1/...` token endpoints (see **REST API tokens**)
 
-Writes on a vehicle and its entries (`PUT/DELETE /api/vehicles/{id}`, `POST /api/vehicles/{id}/photo`, and the `POST`/`PUT`/`DELETE` routes for specs, services, fuel, receipts, reminders, notes, and mods) require the vehicle's owner or an administrator; reads stay available to any signed-in user who can see the vehicle.
+Writes on a vehicle and its entries (`PUT/DELETE /api/vehicles/{id}`, `POST /api/vehicles/{id}/photo`, and the `POST`/`PUT`/`DELETE` routes for specs, services, fuel, receipts, reminders, notes, and mods) require the vehicle's owner or an administrator. Reads are limited the same way: a non-administrator only ever sees their own vehicles, and requests for any other vehicle return `404`.
