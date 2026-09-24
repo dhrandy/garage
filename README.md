@@ -14,6 +14,8 @@ Garage is a simple vehicle maintenance tracker. It is self-hosted and multi-user
    docker run -d --name garage -p 8917:8000 -v ./data:/app/data ghcr.io/dhrandy/garage:latest
    ```
 
+   The examples pull `latest`. To pin a version instead, use a version tag such as `ghcr.io/dhrandy/garage:v0.1.0`.
+
    Or with Docker Compose. Save this as `docker-compose.yml` (the repo includes the same file):
 
    ```yaml
@@ -34,6 +36,8 @@ Garage is a simple vehicle maintenance tracker. It is self-hosted and multi-user
        ports:
          - 8917:8000
    ```
+
+   No `.env` file is needed. The `${VAR:-default}` values work as-is; change them in the file or in your Docker manager's environment settings.
 
    `GARAGE_SECRET` from older examples is optional and currently unused by the app. Then start it:
 
