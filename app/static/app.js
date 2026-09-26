@@ -135,7 +135,26 @@ function authView(setup) {
   state.mods = [];
   state.receipts = [];
   chrome();
-  app.innerHTML = `<section class="auth-panel card"><h1>${setup ? "Set up Garage" : "Welcome back"}</h1><p class="sub">${setup ? "Create the first administrator account." : "Sign in to your garage."}</p><form id="authForm"><div class="field"><label>Username</label><input name="username" minlength="3" autocomplete="username" required autofocus></div><div class="field"><label>Password</label><input name="password" type="password" minlength="8" autocomplete="${setup ? "new-password" : "current-password"}" required></div><div class="error" id="authError"></div><button class="primary">${setup ? "Create administrator" : "Sign in"}</button></form></section>`;
+  app.innerHTML = `<section class="auth-panel card"><h1>${setup ? "Set up Garage" : "Welcome back"}</h1><p class="sub">${setup ? "Create the first administrator account." : "Sign in to your garage."}</p>${setup ? "" : '<button type="button" class="auth-mode-toggle" id="authMode">Use API token</button>'}<form id="authForm"><div class="field" data-password-login><label>Username</label><input name="username" minlength="3" autocomplete="username" required autofocus></div><div class="field" data-password-login><label>Password</label><input name="password" type="password" minlength="8" autocomplete="${setup ? "new-password" : "current-password"}" required></div>${setup ? "" : '<div class="field" data-token-login hidden><label>API token</label><input name="token" type="password" autocomplete="off" spellcheck="false" disabled required></div>'}<div class="error" id="authError"></div><button class="primary">${setup ? "Create administrator" : "Sign in"}</button></form></section>`;
+  if (!setup) {
+    let tokenMode = false;
+    document.querySelector("#authMode").onclick = () => {
+      tokenMode = !tokenMode;
+      const passwordFields = document.querySelectorAll("[data-password-login]");
+      const tokenField = document.querySelector("[data-token-login]");
+      passwordFields.forEach((field) => {
+        field.hidden = tokenMode;
+        field.querySelector("input").disabled = tokenMode;
+      });
+      tokenField.hidden = !tokenMode;
+      tokenField.querySelector("input").disabled = !tokenMode;
+      document.querySelector("#authMode").textContent = tokenMode
+        ? "Use username and password"
+        : "Use API token";
+      document.querySelector("#authError").textContent = "";
+      (tokenMode ? tokenField : passwordFields[0]).querySelector("input").focus();
+    };
+  }
   document.querySelector("#authForm").onsubmit = async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);

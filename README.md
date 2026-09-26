@@ -14,7 +14,7 @@ Garage is a simple vehicle maintenance tracker. It is self-hosted and multi-user
    docker run -d --name garage -p 8917:8000 -v ./data:/app/data ghcr.io/dhrandy/garage:latest
    ```
 
-   The examples pull `latest`. To pin a version instead, use a version tag such as `ghcr.io/dhrandy/garage:v0.1.0`.
+   The examples pull `latest`. To pin a version instead, use a version tag such as `ghcr.io/dhrandy/garage:v0.2.0`.
 
    Or with Docker Compose. Save this as `docker-compose.yml` (the repo includes the same file):
 
@@ -130,6 +130,10 @@ mailto://user:pass@smtp.example.com?to=you@example.com
 ```
 
 A plain `http(s)://` URL receives a JSON webhook POST instead (`{"title": ..., "body": ...}`), which also works if the apprise package is unavailable. Treat these URLs like passwords: they carry service tokens, so only administrators can read or change them. The URLs and the sent-state live in SQLite.
+
+## Signing in with an API token
+
+On the sign-in page, choose **Use API token** and enter a token created under **Settings → API tokens**. No username or website password is needed. The same session cookie and account permissions apply as with password sign-in. A token belongs to its creator: a member token cannot sign in as an administrator. Disabled accounts and revoked tokens cannot sign in. The regular username/password sign-in remains available; the REST API and bearer-token access are unchanged. Treat the token like a password: use HTTPS, never put it in URLs, logs or shared screenshots, and revoke it if exposed. The sign-in endpoint limits failed attempts from each client address for both methods.
 
 ## REST API tokens
 

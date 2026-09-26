@@ -63,7 +63,7 @@ _api_lock = threading.Lock()
 
 app = FastAPI(
     title="Garage",
-    version="2.0.0",
+    version="0.2.0",
     docs_url=None,
     openapi_url=None,
 )
@@ -624,8 +624,9 @@ def display_user(c: sqlite3.Connection, user_id: int | None) -> str:
 
 
 class Credentials(BaseModel):
-    username: str
-    password: str
+    username: str | None = None
+    password: str | None = None
+    token: str | None = None
 
 
 class VehicleIn(BaseModel):
@@ -845,18 +846,40 @@ def login(body: Credentials, request: Request, response: Response):
             "Too many login attempts. Try again later.",
             headers={"Retry-After": str(retry_after)},
         )
+    row = None
     with db() as c:
-        row = c.execute(
-            "SELECT * FROM users WHERE username=? COLLATE NOCASE",
-            (body.username.strip(),),
-        ).fetchone()
-    if (
-        not row
-        or not row["active"]
-        or not verify_password(body.password, row["password_hash"], row["salt"])
-    ):
+        if body.token is not None:
+            # A token is a standalone credential. Never combine it with a username or
+            # password, and never echo it in an error or log entry.
+            if body.username is None and body.password is None and len(body.token) <= 256:
+                candidate = hashlib.sha256(body.token.encode()).hexdigest()
+                tokens = c.execute(
+                    """SELECT t.token_hash, u.* FROM api_tokens t
+                    JOIN users u ON u.id=t.created_by
+                    WHERE t.revoked=0 AND u.active=1"""
+                ).fetchall()
+                # Do not use SQL equality on the secret: compare all active hashes in
+                # constant time, including those after a match.
+                for token in tokens:
+                    if hmac.compare_digest(candidate, token["token_hash"]):
+                        row = token
+        elif body.username is not None and body.password is not None:
+            user = c.execute(
+                "SELECT * FROM users WHERE username=? COLLATE NOCASE",
+                (body.username.strip(),),
+            ).fetchone()
+            if user and user["active"] and verify_password(
+                body.password, user["password_hash"], user["salt"]
+            ):
+                row = user
+    if row is None:
         record_login_failure(ip)
-        raise HTTPException(401, "Invalid username or password")
+        message = (
+            "Invalid credentials"
+            if body.token is not None
+            else "Invalid username or password"
+        )
+        raise HTTPException(401, message)
     clear_login_failures(ip)
     set_session(response, row["id"])
     return {"user": public_user(row)}

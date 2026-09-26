@@ -1535,3 +1535,23 @@ footer {
     grid-column: 3 / 4;
   }
 }
+
+/* The alternative login stays small and readable on narrow screens. */
+.auth-mode-toggle {
+  display: block;
+  margin: 15px 0 20px;
+  padding: 7px 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent, #7db7ff);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.auth-mode-toggle:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 4px;
+}
+/* Hidden login modes must stay hidden even when .field sets display. */
+.auth-panel [hidden] { display: none; }

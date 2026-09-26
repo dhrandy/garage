@@ -374,3 +374,41 @@ def test_compact_layout_on_tiny_square_screens(app_url):
     for size in ((360, 400), (400, 400)):
         assert sizes[size]["h1"] < tall["h1"]
         assert sizes[size]["card"] < tall["card"] * 0.75, f"cards not compact at {size}"
+
+
+def test_token_sign_in_desktop_and_mobile(app_url):
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        # This test module shares an app with the existing browser tests, which
+        # create the first admin during their first run.
+        for width, height in ((1920, 1080), (390, 844)):
+            page = browser.new_page(viewport={"width": width, "height": height})
+            page.goto(app_url)
+            page.wait_for_load_state("networkidle")
+            if page.get_by_role("heading", name="Set up Garage").count():
+                page.locator('[name="username"]').fill("admin-test")
+                page.locator('[name="password"]').fill("password-123")
+                page.get_by_role("button", name="Create administrator").click()
+            else:
+                page.locator('[name="username"]').fill("admin-test")
+                page.locator('[name="password"]').fill("password-123")
+                page.get_by_role("button", name="Sign in").click()
+            expect(page.locator(".vehicle-card").first).to_be_visible()
+            token = page.evaluate("""async () => {
+                const response = await fetch('/api/tokens', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name: 'browser test'})
+                });
+                return (await response.json()).token;
+            }""")
+            page.evaluate("() => fetch('/api/logout', {method: 'POST'})")
+            page.reload()
+            page.get_by_role("button", name="Use API token").click()
+            expect(page.locator('[name="username"]')).to_be_hidden()
+            expect(page.locator('[name="token"]')).to_be_visible()
+            page.locator('[name="token"]').fill(token)
+            page.get_by_role("button", name="Sign in").click()
+            expect(page.locator(".vehicle-card").first).to_be_visible()
+            assert page.evaluate("() => document.documentElement.scrollWidth <= window.innerWidth + 1")
+            page.close()
+        browser.close()

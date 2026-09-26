@@ -3006,3 +3006,59 @@ def test_uploads_over_limit_are_rejected(tmp_path):
             f"/api/vehicles/{vid}/photo", files={"file": ("big.png", big, "image/png")}
         )
         assert r.status_code == 400 and "10 MB" in r.json()["detail"]
+
+
+def test_token_login_uses_owner_session_and_shared_limit(tmp_path):
+    main.DB_PATH = tmp_path / "token-login.db"
+    main._login_failures.clear()
+    main.init_db()
+    with TestClient(main.app) as admin:
+        assert admin.post(
+            "/api/setup", json={"username": "admin", "password": "password-123"}
+        ).status_code == 200
+        assert admin.post(
+            "/api/users",
+            json={"username": "member", "password": "password-456", "is_admin": False},
+        ).status_code == 200
+        admin_token = admin.post("/api/tokens", json={"name": "admin test"}).json()
+    with TestClient(main.app) as member:
+        assert member.post(
+            "/api/login", json={"username": "member", "password": "password-456"}
+        ).status_code == 200
+        member_token = member.post("/api/tokens", json={"name": "member test"}).json()
+    with TestClient(main.app) as client:
+        invalid = {"token": "gar_invalid"}
+        for _ in range(main.LOGIN_LIMIT - 1):
+            result = client.post("/api/login", json=invalid)
+            assert result.status_code == 401
+            assert result.json() == {"detail": "Invalid credentials"}
+            assert "gar_invalid" not in result.text
+        assert client.post(
+            "/api/login", json={"username": "admin", "password": "wrong-password"}
+        ).status_code == 401
+        blocked = client.post("/api/login", json={"token": admin_token["token"]})
+        assert blocked.status_code == 429
+        assert int(blocked.headers["retry-after"]) > 0
+    main._login_failures.clear()
+    with TestClient(main.app) as client:
+        assert client.post("/api/login", json={"token": member_token["token"]}).status_code == 200
+        assert client.get("/api/me").json()["username"] == "member"
+        assert client.get("/api/users").status_code == 403
+        client.post("/api/logout")
+        assert client.get("/api/me").status_code == 401
+        assert client.post("/api/login", json={"token": admin_token["token"]}).status_code == 200
+        assert client.get("/api/me").json()["is_admin"] is True
+        assert client.post("/api/login", json={"token": "gar_invalid"}).status_code == 401
+        assert client.post("/api/login", json={"token": member_token["token"], "username": "admin"}).status_code == 401
+        assert client.post("/api/login", json={"token": admin_token["token"], "password": "password-123"}).status_code == 401
+    main._login_failures.clear()
+    with TestClient(main.app) as admin:
+        assert admin.post("/api/login", json={"username": "admin", "password": "password-123"}).status_code == 200
+        assert admin.delete(f"/api/tokens/{member_token['id']}").status_code == 200
+        with main.db() as c:
+            c.execute("UPDATE users SET active=0 WHERE username='admin'")
+    with TestClient(main.app) as client:
+        assert client.post("/api/login", json={"token": member_token["token"]}).status_code == 401
+        assert client.post("/api/login", json={"token": admin_token["token"]}).status_code == 401
+        assert client.post("/api/login", json={"username": "admin", "password": "password-123"}).status_code == 401
+    main._login_failures.clear()
