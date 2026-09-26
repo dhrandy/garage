@@ -32,7 +32,7 @@ These screens use fictional demo vehicles and records; no real garage or owner d
 
 **Mobile garage** - the garage overview on a phone.
 
-<p align="center"><img src="docs/screenshots/mobile-garage.png" alt="Garage overview on a 390px phone" width="380"></p>
+<p align="center"><img src="docs/screenshots/mobile-garage-viewport.png" alt="Garage overview on a 390px phone" width="380"></p>
 
 **Mobile maintenance** - service history on a phone.
 
