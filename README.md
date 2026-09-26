@@ -319,7 +319,7 @@ The browser uses a JSON REST API under `/api`. Authentication is cookie-based.
 
 Writes on a vehicle and its entries (`PUT/DELETE /api/vehicles/{id}`, `POST /api/vehicles/{id}/photo`, and the `POST`/`PUT`/`DELETE` routes for specs, services, fuel, receipts, reminders, notes, and mods) require the vehicle's owner or an administrator. Reads are limited the same way: a non-administrator only ever sees their own vehicles, and requests for any other vehicle return `404`.
 
-## Mobile screenshots
+## Additional Mobile Screenshots
 
 **Mobile maintenance** - service history on a phone.
 
