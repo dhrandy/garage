@@ -6,6 +6,50 @@ Garage is in beta. Things may change between versions - features, data formats, 
 
 Garage is a simple vehicle maintenance tracker. It is self-hosted and multi-user. Each person gets their own garage view with vehicle mileage, service history, maintenance reminders, and costs in sync across phones and computers. It runs as one Docker container with SQLite storage.
 
+## Screenshots
+
+These screens use fictional demo vehicles and records; no real garage or owner data is shown.
+
+**Garage overview** - mileage, upcoming maintenance, and costs at a glance.
+
+![Garage overview with six fictional demo vehicles](docs/screenshots/desktop-garage.png)
+
+**Maintenance log** - service history with photos and costs.
+
+![Maintenance log for a fictional demo vehicle](docs/screenshots/desktop-log.png)
+
+**Reminders** - upcoming service intervals and deadlines.
+
+![Maintenance reminders for a fictional demo vehicle](docs/screenshots/desktop-reminders.png)
+
+**Fuel** - fill-ups, average MPG, and fuel cost per mile.
+
+![Fuel history for a fictional demo vehicle](docs/screenshots/desktop-fuel.png)
+
+**Specs** - vehicle details and maintenance specifications.
+
+![Specifications for a fictional demo vehicle](docs/screenshots/desktop-specs.png)
+
+**Mobile garage** - the garage overview on a phone.
+
+<img src="docs/screenshots/mobile-garage.png" alt="Garage overview on a 390px phone" width="380">
+
+**Mobile maintenance** - service history on a phone.
+
+<img src="docs/screenshots/mobile-log.png" alt="Maintenance log on a 390px phone" width="380">
+
+**Mobile reminders** - service intervals on a phone.
+
+<img src="docs/screenshots/mobile-reminders.png" alt="Maintenance reminders on a 390px phone" width="380">
+
+**Mobile fuel** - fuel history on a phone.
+
+<img src="docs/screenshots/mobile-fuel.png" alt="Fuel history on a 390px phone" width="380">
+
+**Mobile specs** - vehicle details on a phone.
+
+<img src="docs/screenshots/mobile-specs.png" alt="Vehicle specifications on a 390px phone" width="380">
+
 ## Quick start
 
 1. Run Garage with Docker, keeping its data in a folder on the host:
