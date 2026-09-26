@@ -34,22 +34,6 @@ These screens use fictional demo vehicles and records; no real garage or owner d
 
 <p align="center"><img src="docs/screenshots/mobile-garage-viewport.png" alt="Garage overview on a 390px phone" width="380"></p>
 
-**Mobile maintenance** - service history on a phone.
-
-<p align="center"><img src="docs/screenshots/mobile-log.png" alt="Maintenance log on a 390px phone" width="380"></p>
-
-**Mobile reminders** - service intervals on a phone.
-
-<p align="center"><img src="docs/screenshots/mobile-reminders.png" alt="Maintenance reminders on a 390px phone" width="380"></p>
-
-**Mobile fuel** - fuel history on a phone.
-
-<p align="center"><img src="docs/screenshots/mobile-fuel.png" alt="Fuel history on a 390px phone" width="380"></p>
-
-**Mobile specs** - vehicle details on a phone.
-
-<p align="center"><img src="docs/screenshots/mobile-specs.png" alt="Vehicle specifications on a 390px phone" width="380"></p>
-
 ## Quick start
 
 1. Run Garage with Docker, keeping its data in a folder on the host:
@@ -334,3 +318,21 @@ The browser uses a JSON REST API under `/api`. Authentication is cookie-based.
 - `/api/v1/...` token endpoints (see **REST API tokens**)
 
 Writes on a vehicle and its entries (`PUT/DELETE /api/vehicles/{id}`, `POST /api/vehicles/{id}/photo`, and the `POST`/`PUT`/`DELETE` routes for specs, services, fuel, receipts, reminders, notes, and mods) require the vehicle's owner or an administrator. Reads are limited the same way: a non-administrator only ever sees their own vehicles, and requests for any other vehicle return `404`.
+
+## Mobile screenshots
+
+**Mobile maintenance** - service history on a phone.
+
+<p align="center"><img src="docs/screenshots/mobile-log.png" alt="Maintenance log on a 390px phone" width="380"></p>
+
+**Mobile reminders** - service intervals on a phone.
+
+<p align="center"><img src="docs/screenshots/mobile-reminders.png" alt="Maintenance reminders on a 390px phone" width="380"></p>
+
+**Mobile fuel** - fuel history on a phone.
+
+<p align="center"><img src="docs/screenshots/mobile-fuel.png" alt="Fuel history on a 390px phone" width="380"></p>
+
+**Mobile specs** - vehicle details on a phone.
+
+<p align="center"><img src="docs/screenshots/mobile-specs.png" alt="Vehicle specifications on a 390px phone" width="380"></p>
