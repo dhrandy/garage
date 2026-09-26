@@ -32,23 +32,23 @@ These screens use fictional demo vehicles and records; no real garage or owner d
 
 **Mobile garage** - the garage overview on a phone.
 
-<img src="docs/screenshots/mobile-garage.png" alt="Garage overview on a 390px phone" width="380">
+<p align="center"><img src="docs/screenshots/mobile-garage.png" alt="Garage overview on a 390px phone" width="380"></p>
 
 **Mobile maintenance** - service history on a phone.
 
-<img src="docs/screenshots/mobile-log.png" alt="Maintenance log on a 390px phone" width="380">
+<p align="center"><img src="docs/screenshots/mobile-log.png" alt="Maintenance log on a 390px phone" width="380"></p>
 
 **Mobile reminders** - service intervals on a phone.
 
-<img src="docs/screenshots/mobile-reminders.png" alt="Maintenance reminders on a 390px phone" width="380">
+<p align="center"><img src="docs/screenshots/mobile-reminders.png" alt="Maintenance reminders on a 390px phone" width="380"></p>
 
 **Mobile fuel** - fuel history on a phone.
 
-<img src="docs/screenshots/mobile-fuel.png" alt="Fuel history on a 390px phone" width="380">
+<p align="center"><img src="docs/screenshots/mobile-fuel.png" alt="Fuel history on a 390px phone" width="380"></p>
 
 **Mobile specs** - vehicle details on a phone.
 
-<img src="docs/screenshots/mobile-specs.png" alt="Vehicle specifications on a 390px phone" width="380">
+<p align="center"><img src="docs/screenshots/mobile-specs.png" alt="Vehicle specifications on a 390px phone" width="380"></p>
 
 ## Quick start
 
