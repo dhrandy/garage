@@ -3043,9 +3043,14 @@ def test_token_login_uses_owner_session_and_shared_limit(tmp_path):
     with TestClient(main.app) as client:
         assert client.post("/api/login", json={"token": member_token["token"]}).status_code == 200
         assert client.get("/api/me").json()["username"] == "member"
+        client.post("/api/logout")
+        assert client.post("/api/login", json={"username": "", "password": member_token["token"]}).status_code == 200
+        assert client.get("/api/me").json()["username"] == "member"
         assert client.get("/api/users").status_code == 403
         client.post("/api/logout")
         assert client.get("/api/me").status_code == 401
+        assert client.post("/api/login", json={"username": "", "password": "gar_invalid"}).status_code == 401
+        assert client.post("/api/login", json={"username": "admin", "password": admin_token["token"]}).status_code == 401
         assert client.post("/api/login", json={"token": admin_token["token"]}).status_code == 200
         assert client.get("/api/me").json()["is_admin"] is True
         assert client.post("/api/login", json={"token": "gar_invalid"}).status_code == 401

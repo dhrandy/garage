@@ -63,7 +63,7 @@ _api_lock = threading.Lock()
 
 app = FastAPI(
     title="Garage",
-    version="0.2.0",
+    version="0.2.1",
     docs_url=None,
     openapi_url=None,
 )
@@ -848,11 +848,14 @@ def login(body: Credentials, request: Request, response: Response):
         )
     row = None
     with db() as c:
-        if body.token is not None:
+        token_value = body.token or (
+            body.password if body.username == "" and body.password and body.password.startswith("gar_") else None
+        )
+        if token_value is not None:
             # A token is a standalone credential. Never combine it with a username or
             # password, and never echo it in an error or log entry.
-            if body.username is None and body.password is None and len(body.token) <= 256:
-                candidate = hashlib.sha256(body.token.encode()).hexdigest()
+            if body.username in (None, "") and (body.token is None or body.password is None) and len(token_value) <= 256:
+                candidate = hashlib.sha256(token_value.encode()).hexdigest()
                 tokens = c.execute(
                     """SELECT t.token_hash, u.* FROM api_tokens t
                     JOIN users u ON u.id=t.created_by

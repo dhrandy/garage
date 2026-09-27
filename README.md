@@ -42,7 +42,7 @@ These screens use fictional demo vehicles and records; no real garage or owner d
    docker run -d --name garage -p 8917:8000 -v ./data:/app/data ghcr.io/dhrandy/garage:latest
    ```
 
-   The examples pull `latest`. To pin a version instead, use a version tag such as `ghcr.io/dhrandy/garage:v0.2.0`.
+   The examples pull `latest`. To pin a version instead, use a version tag such as `ghcr.io/dhrandy/garage:v0.2.1`.
 
    Or with Docker Compose. Save this as `docker-compose.yml` (the repo includes the same file):
 
@@ -161,7 +161,7 @@ A plain `http(s)://` URL receives a JSON webhook POST instead (`{"title": ..., "
 
 ## Signing in with an API token
 
-On the sign-in page, choose **Use API token** and enter a token created under **Settings → API tokens**. No username or website password is needed. The same session cookie and account permissions apply as with password sign-in. A token belongs to its creator: a member token cannot sign in as an administrator. Disabled accounts and revoked tokens cannot sign in. The regular username/password sign-in remains available; the REST API and bearer-token access are unchanged. Treat the token like a password: use HTTPS, never put it in URLs, logs or shared screenshots, and revoke it if exposed. The sign-in endpoint limits failed attempts from each client address for both methods.
+The sign-in page does not advertise tokens. To sign in with an existing API token from **Settings → API tokens**, leave **Username** empty and put the token in the masked **Password** field. The same session cookie and account permissions apply as with password sign-in. A token belongs to its creator: a member token cannot sign in as an administrator. Disabled accounts and revoked tokens cannot sign in. The regular username/password sign-in remains available; the REST API and bearer-token access are unchanged. Treat the token like a password: use HTTPS, never put it in URLs, logs or shared screenshots, and revoke it if exposed. The sign-in endpoint limits failed attempts from each client address for both methods.
 
 ## REST API tokens
 
@@ -214,12 +214,13 @@ API requests are rate limited: 100 requests per minute per token, and repeated i
 
 The REST API works well with AI assistants that can make HTTP requests. An administrator can create a token in **Settings → API tokens**. Each token acts with its creator's permissions, including the same vehicle visibility and write access.
 
-Copy this prompt and replace the server and token placeholders with your own values:
+Copy this prompt and replace the server placeholder with your own value. Give the token to your agent through a secure credential store, not the prompt:
 
 ```text
 You have access to my Garage vehicle tracker API.
 Base URL: https://your-server.example/api/v1
-Auth: send header "Authorization: Bearer TOKEN_HERE" on every request.
+Auth: use my token from the secure credential store in an "Authorization: Bearer <GARAGE_API_TOKEN>" header on every request.
+For website sign-in, leave Username blank and put that token in the masked Password field; token sign-in is not shown on the page. Never put the token in a URL, source file, prompt, or log.
 API docs and schema: https://your-server.example/api/docs
 Use it to read vehicle info and specs, log fuel from receipts, log services and mods, and check maintenance reminders. Read the schema at https://your-server.example/api/openapi.json before your first write. Confirm the vehicle, date, and cost with me before logging anything.
 ```
