@@ -63,7 +63,7 @@ _api_lock = threading.Lock()
 
 app = FastAPI(
     title="Garage",
-    version="0.2.1",
+    version="0.2.2",
     docs_url=None,
     openapi_url=None,
 )
@@ -251,7 +251,8 @@ def init_db():
           token_hash TEXT PRIMARY KEY,
           user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
           expires_at TEXT NOT NULL,
-          created_at TEXT NOT NULL
+          created_at TEXT NOT NULL,
+          via_token INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS vehicles (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -392,6 +393,11 @@ def init_db():
           updated_at TEXT NOT NULL
         );
         """)
+        # Old sessions have no credential type. Sign in once again rather than
+        # letting an old token login retain access to account settings.
+        if "via_token" not in {row["name"] for row in c.execute("PRAGMA table_info(sessions)")}:
+            c.execute("ALTER TABLE sessions ADD COLUMN via_token INTEGER NOT NULL DEFAULT 0")
+            c.execute("DELETE FROM sessions")
         user_columns = {r["name"] for r in c.execute("PRAGMA table_info(users)")}
         if "show_all_vehicles" not in user_columns:
             c.execute(
@@ -525,6 +531,16 @@ def public_user(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+def token_session_allowed(request: Request) -> bool:
+    """Token sign-in never grants settings, secrets, or account management."""
+    path = request.url.path.rstrip("/")
+    blocked = (
+        "/api/settings", "/api/notifications", "/api/users", "/api/tokens",
+        "/api/export", "/api/import", "/api/me/password",
+    )
+    return not any(path == prefix or path.startswith(prefix + "/") for prefix in blocked)
+
+
 def current_user(request: Request, admin: bool = False) -> sqlite3.Row:
     token = request.cookies.get(COOKIE)
     if not token:
@@ -532,29 +548,37 @@ def current_user(request: Request, admin: bool = False) -> sqlite3.Row:
     token_hash = hashlib.sha256(token.encode()).hexdigest()
     with db() as c:
         row = c.execute(
-            """SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id
+            """SELECT u.*, s.via_token AS token_session FROM sessions s JOIN users u ON u.id=s.user_id
           WHERE s.token_hash=? AND s.expires_at>? AND u.active=1""",
             (token_hash, now_iso()),
         ).fetchone()
     if not row:
         raise HTTPException(401, "Session expired")
+    if row["token_session"] and (
+        admin or not token_session_allowed(request)
+    ):
+        raise HTTPException(
+            403,
+            "Settings and account management need a username-and-password sign-in.",
+        )
     if admin and not row["is_admin"]:
         raise HTTPException(403, "Administrator access required")
     return row
 
 
-def set_session(response: Response, user_id: int):
+def set_session(response: Response, user_id: int, via_token: bool = False):
     raw = secrets.token_urlsafe(32)
     expires = datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)
     with db() as c:
         c.execute("DELETE FROM sessions WHERE expires_at<=?", (now_iso(),))
         c.execute(
-            "INSERT INTO sessions(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)",
+            "INSERT INTO sessions(token_hash,user_id,expires_at,created_at,via_token) VALUES(?,?,?,?,?)",
             (
                 hashlib.sha256(raw.encode()).hexdigest(),
                 user_id,
                 expires.isoformat(),
                 now_iso(),
+                int(via_token),
             ),
         )
     response.set_cookie(
@@ -847,6 +871,7 @@ def login(body: Credentials, request: Request, response: Response):
             headers={"Retry-After": str(retry_after)},
         )
     row = None
+    token_value = None
     with db() as c:
         token_value = body.token or (
             body.password if body.username == "" and body.password and body.password.startswith("gar_") else None
@@ -884,8 +909,8 @@ def login(body: Credentials, request: Request, response: Response):
         )
         raise HTTPException(401, message)
     clear_login_failures(ip)
-    set_session(response, row["id"])
-    return {"user": public_user(row)}
+    set_session(response, row["id"], via_token=bool(token_value))
+    return {"user": public_user(row), "token_session": bool(token_value)}
 
 
 @app.post("/api/logout")
@@ -903,7 +928,8 @@ def logout(request: Request, response: Response):
 
 @app.get("/api/me")
 def me(request: Request):
-    return public_user(current_user(request))
+    user = current_user(request)
+    return {**public_user(user), "token_session": bool(user["token_session"])}
 
 
 class VehicleViewIn(BaseModel):

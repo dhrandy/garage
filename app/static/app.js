@@ -102,9 +102,9 @@ async function load() {
     api("/notes"),
     api("/mods"),
     api("/receipts"),
-    api("/settings"),
+    state.user.token_session ? Promise.resolve({ garage_name: "Your Garage" }) : api("/settings"),
   ]);
-  if (state.user?.is_admin) state.users = await api("/users");
+  if (state.user?.is_admin && !state.user.token_session) state.users = await api("/users");
 }
 function chrome() {
   const name = state.settings?.garage_name || "Your Garage";
@@ -115,8 +115,8 @@ function chrome() {
     .forEach((x) => (x.style.display = state.user ? "" : "none"));
   document
     .querySelectorAll(".admin-only")
-    .forEach((x) => (x.style.display = state.user?.is_admin ? "" : "none"));
-  document.querySelector("[data-action=settings]").style.display = state.user
+    .forEach((x) => (x.style.display = state.user?.is_admin && !state.user.token_session ? "" : "none"));
+  document.querySelector("[data-action=settings]").style.display = state.user && !state.user.token_session
     ? ""
     : "none";
   document.querySelector("#userBadge").textContent = state.user
@@ -845,6 +845,10 @@ function reminderForm(
 }
 
 async function settingsView() {
+  if (state.user?.token_session) {
+    app.innerHTML = `<p class="sub">Settings need a username-and-password sign-in.</p>`;
+    return;
+  }
   const s = state.settings,
     isAdmin = !!state.user?.is_admin;
   state.tokens = await api("/tokens");

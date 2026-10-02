@@ -411,6 +411,17 @@ def test_token_sign_in_desktop_and_mobile(app_url):
             page.locator('[name="password"]').fill(token)
             page.get_by_role("button", name="Sign in").click()
             expect(page.locator(".vehicle-card").first).to_be_visible()
+            expect(page.locator('[data-action="settings"]')).to_be_hidden()
+            assert page.request.get(app_url + '/api/settings').status == 403
+            page.screenshot(path=f'/tmp/garage-token-settings-{width}.png', full_page=True)
+            page.request.post(app_url + '/api/logout')
+            page.reload()
+            page.locator('[name="username"]').fill("admin-test")
+            page.locator('[name="password"]').fill("password-123")
+            page.get_by_role("button", name="Sign in").click()
+            expect(page.locator(".vehicle-card").first).to_be_visible()
+            assert page.request.get(app_url + '/api/settings').status == 200
+            assert page.locator('[data-action="settings"]').evaluate('(el) => el.style.display') != 'none'
             assert page.evaluate("() => document.documentElement.scrollWidth <= window.innerWidth + 1")
             page.close()
         browser.close()

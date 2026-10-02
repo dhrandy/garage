@@ -3067,3 +3067,49 @@ def test_token_login_uses_owner_session_and_shared_limit(tmp_path):
         assert client.post("/api/login", json={"token": admin_token["token"]}).status_code == 401
         assert client.post("/api/login", json={"username": "admin", "password": "password-123"}).status_code == 401
     main._login_failures.clear()
+
+
+def test_token_sessions_cannot_manage_settings(tmp_path):
+    main.DB_PATH = tmp_path / "scoped-sessions.db"
+    main._login_failures.clear()
+    main._api_failures.clear()
+    main._api_calls.clear()
+    main.init_db()
+    with TestClient(main.app) as admin:
+        assert admin.post("/api/setup", json={"username": "admin-test", "password": "password-123"}).status_code == 200
+        token = admin.post("/api/tokens", json={"name": "Session test"}).json()["token"]
+        assert admin.get("/api/me").json()["token_session"] is False
+        assert admin.get("/api/settings").status_code == 200
+        with TestClient(main.app) as agent:
+            assert agent.post("/api/login", json={"token": token}).status_code == 200
+            assert agent.get("/api/me").json()["token_session"] is True
+            for route in ("/api/settings", "/api/notifications", "/api/users", "/api/tokens", "/api/export"):
+                assert agent.get(route).status_code == 403
+            assert agent.put("/api/settings", json={}).status_code == 403
+            assert agent.post("/api/tokens", json={"name": "Forbidden"}).status_code == 403
+            assert agent.post("/api/notifications/test").status_code == 403
+            assert agent.get("/api/docs").status_code == 200
+            assert agent.get("/api/vehicles").status_code == 200
+            assert agent.post("/api/logout").status_code == 200
+            assert agent.post("/api/login", json={"username": "", "password": token}).status_code == 200
+            assert agent.get("/api/settings").status_code == 403
+            assert agent.post("/api/logout").status_code == 200
+            assert agent.post("/api/login", json={"username": "admin-test", "password": "password-123"}).status_code == 200
+            assert agent.get("/api/settings").status_code == 200
+
+
+def test_session_scope_migration_signs_out_legacy_sessions_once(tmp_path):
+    main.DB_PATH = tmp_path / "legacy-sessions.db"
+    main.init_db()
+    with main.db() as c:
+        c.execute("DROP TABLE sessions")
+        c.execute("CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER, expires_at TEXT, created_at TEXT)")
+        c.execute("INSERT INTO sessions VALUES ('legacy', 1, '2099-01-01', '2026-01-01')")
+    main.init_db()
+    with main.db() as c:
+        assert c.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0
+        assert "via_token" in {r["name"] for r in c.execute("PRAGMA table_info(sessions)")}
+        c.execute("INSERT INTO sessions VALUES ('new-session', 1, '2099-01-01', '2026-01-01', 1)")
+    main.init_db()
+    with main.db() as c:
+        assert c.execute("SELECT count(*) FROM sessions").fetchone()[0] == 1

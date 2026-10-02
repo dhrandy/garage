@@ -161,7 +161,7 @@ A plain `http(s)://` URL receives a JSON webhook POST instead (`{"title": ..., "
 
 ## Signing in with an API token
 
-The sign-in page does not advertise tokens. To sign in with an existing API token from **Settings → API tokens**, leave **Username** empty and put the token in the masked **Password** field. The same session cookie and account permissions apply as with password sign-in. A token belongs to its creator: a member token cannot sign in as an administrator. Disabled accounts and revoked tokens cannot sign in. The regular username/password sign-in remains available; the REST API and bearer-token access are unchanged. Treat the token like a password: use HTTPS, never put it in URLs, logs or shared screenshots, and revoke it if exposed. The sign-in endpoint limits failed attempts from each client address for both methods.
+The sign-in page does not advertise tokens. To sign in with an existing API token from **Settings → API tokens**, leave **Username** empty and put the token in the masked **Password** field. Token sign-in uses a marked session that cannot open Settings, manage accounts/tokens/notifications, or import/export backups. Use username/password sign-in for those actions. A token belongs to its creator: a member token cannot sign in as an administrator. Disabled accounts and revoked tokens cannot sign in. The regular username/password sign-in remains available; the REST API and bearer-token access are unchanged. Treat the token like a password: use HTTPS, never put it in URLs, logs or shared screenshots, and revoke it if exposed. The sign-in endpoint limits failed attempts from each client address for both methods.
 
 ## REST API tokens
 
@@ -337,3 +337,5 @@ Writes on a vehicle and its entries (`PUT/DELETE /api/vehicles/{id}`, `POST /api
 **Mobile specs** - vehicle details on a phone.
 
 <p align="center"><img src="docs/screenshots/mobile-specs.png" alt="Vehicle specifications on a 390px phone" width="380"></p>
+
+Token website sessions cannot open Settings, manage accounts or tokens, read notification credentials, or import/export backups. Those actions require username/password sign-in. This update signs existing sessions out once because older sessions did not record how they signed in. Stored app data and API tokens stay unchanged.
