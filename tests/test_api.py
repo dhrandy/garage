@@ -3114,3 +3114,107 @@ def test_session_scope_migration_signs_out_legacy_sessions_once(tmp_path):
     main.init_db()
     with main.db() as c:
         assert c.execute("SELECT count(*) FROM sessions").fetchone()[0] == 1
+
+
+def test_reminder_lead_times(tmp_path):
+    from datetime import date, timedelta
+
+    today = date(2026, 10, 1)
+    renewal = {
+        "miles_interval": None,
+        "months_interval": None,
+        "last_mileage": 0,
+        "last_date": "2026-01-01",
+        "due_date": (today + timedelta(days=20)).isoformat(),
+        "repeats_yearly": False,
+    }
+    # Default window stays 30 days for renewals.
+    assert main.reminder_status(0, renewal, today=today)["state"] == "soon"
+    assert (
+        main.reminder_status(0, {**renewal, "lead_days": 14}, today=today)["state"]
+        == "ok"
+    )
+    assert (
+        main.reminder_status(0, {**renewal, "lead_days": 21}, today=today)["state"]
+        == "soon"
+    )
+    far = {**renewal, "due_date": (today + timedelta(days=50)).isoformat()}
+    assert main.reminder_status(0, far, today=today)["state"] == "ok"
+    assert (
+        main.reminder_status(0, {**far, "lead_days": 60}, today=today)["state"]
+        == "soon"
+    )
+    past = {**renewal, "due_date": (today - timedelta(days=1)).isoformat()}
+    assert (
+        main.reminder_status(0, {**past, "lead_days": 0}, today=today)["state"]
+        == "overdue"
+    )
+    service = {
+        "miles_interval": 5000,
+        "months_interval": None,
+        "last_mileage": 10000,
+        "last_date": "2026-09-01",
+        "due_date": None,
+        "repeats_yearly": False,
+    }
+    # 1,500 miles left: default flags at 80% (1,000 left), so not yet.
+    assert main.reminder_status(13500, service, today=today)["state"] == "ok"
+    assert (
+        main.reminder_status(13500, {**service, "lead_miles": 2000}, today=today)[
+            "state"
+        ]
+        == "soon"
+    )
+    assert (
+        main.reminder_status(15000, {**service, "lead_miles": 500}, today=today)[
+            "state"
+        ]
+        == "overdue"
+    )
+    months = {
+        "miles_interval": None,
+        "months_interval": 6,
+        "last_mileage": 0,
+        "last_date": "2026-06-10",
+        "due_date": None,
+        "repeats_yearly": False,
+    }
+    assert main.reminder_status(0, months, today=today)["state"] == "ok"
+    assert (
+        main.reminder_status(0, {**months, "lead_days": 80}, today=today)["state"]
+        == "soon"
+    )
+
+    main.DB_PATH = tmp_path / "lead.db"
+    main.RECEIPTS_DIR = tmp_path / "receipts"
+    main.RECEIPTS_DIR.mkdir(exist_ok=True)
+    main._login_failures.clear()
+    main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post(
+            "/api/setup", json={"username": "admin", "password": "password-123"}
+        )
+        vehicle = admin.post(
+            "/api/vehicles", json={"name": "Lead Car", "year": "2020", "mileage": 100}
+        ).json()
+        body = {
+            "vehicle_id": vehicle["id"],
+            "name": "Inspection",
+            "due_date": "2027-01-01",
+            "last_date": "2026-10-01",
+            "lead_days": 14,
+            "lead_miles": None,
+        }
+        made = admin.post("/api/reminders", json=body)
+        assert made.status_code == 200
+        assert made.json()["lead_days"] == 14 and made.json()["lead_miles"] is None
+        plain = admin.post("/api/reminders", json={**body, "lead_days": None}).json()
+        assert plain["lead_days"] is None
+        edited = admin.put(
+            f"/api/reminders/{plain['id']}", json={**body, "lead_days": 45}
+        )
+        assert edited.json()["lead_days"] == 45
+        assert (
+            admin.post("/api/reminders", json={**body, "lead_days": -1}).status_code
+            == 422
+        )

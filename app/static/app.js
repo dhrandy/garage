@@ -164,13 +164,26 @@ function render() {
 }
 function reminderStatus(v, r) {
   const cur = Math.max(v.mileage, v.est_mileage || 0),
-    progress = [];
+    progress = [],
+    parts = {},
+    leadDays = r.lead_days ?? null,
+    leadMiles = r.lead_miles ?? null;
   let labels = [];
   if (r.miles_interval) {
     const used = cur - r.last_mileage,
       p = used / r.miles_interval,
       due = r.last_mileage + r.miles_interval;
     progress.push(p);
+    parts.miles =
+      due - cur <= 0
+        ? "overdue"
+        : leadMiles != null
+          ? due - cur <= leadMiles
+            ? "soon"
+            : "ok"
+          : p >= 0.8
+            ? "soon"
+            : "ok";
     labels.push(`${dist(Math.max(0, due - cur))} ${unit()} remaining`);
   }
   if (r.months_interval) {
@@ -180,21 +193,39 @@ function reminderStatus(v, r) {
     const p = (Date.now() - last) / (due - last);
     progress.push(p);
     const days = Math.ceil((due - Date.now()) / 86400000);
+    parts.days =
+      p >= 1
+        ? "overdue"
+        : leadDays != null
+          ? days <= leadDays
+            ? "soon"
+            : "ok"
+          : p >= 0.8
+            ? "soon"
+            : "ok";
     labels.push(days >= 0 ? `${days} days remaining` : `${-days} days late`);
   }
   if (r.due_date) {
     const due = new Date(`${r.due_date}T12:00:00`),
       days = Math.ceil((due - Date.now()) / 86400000);
-    progress.push(days < 0 ? 1 : days <= 30 ? 0.8 : 0);
+    const window = leadDays ?? 30;
+    progress.push(days < 0 ? 1 : days <= window ? 0.8 : 0);
+    parts.days = days < 0 ? "overdue" : days <= window ? "soon" : "ok";
     labels.push(
       (days >= 0 ? `due ${date(r.due_date)}` : `${-days} days late`) +
         (r.repeats_yearly ? " · yearly" : ""),
     );
   }
   const p = Math.max(...progress, 0),
-    status = p >= 1 ? "overdue" : p >= 0.8 ? "soon" : "ok";
+    all = Object.values(parts),
+    status = all.includes("overdue")
+      ? "overdue"
+      : all.includes("soon")
+        ? "soon"
+        : "ok";
   return {
     state: status,
+    parts,
     pct: Math.min(1, p),
     label: labels.join(" · ") || "No schedule",
   };
@@ -252,7 +283,7 @@ function dueItems() {
           byDays = false;
         if (
           days != null &&
-          (miles == null || (days <= 30 && miles >= 0))
+          (miles == null || (st.parts.days !== "ok" && miles >= 0))
         ) {
           byDays = true;
           chip = days < 0 ? `${-days}d late` : days === 0 ? "today" : `${days}d left`;
@@ -868,6 +899,8 @@ function reminderForm(
     months_interval: "",
     due_date: "",
     repeats_yearly: false,
+    lead_days: "",
+    lead_miles: "",
     last_date: today(),
     last_mileage: state.vehicles.find((v) => v.id === state.selected).mileage,
   },
@@ -877,7 +910,7 @@ function reminderForm(
       ? "renewal"
       : "service";
   modal(
-    `<h2>${r.id ? "Edit" : "Add"} reminder</h2><form id="reminderForm"><div class="field"><label>Reminder type</label><select name="reminder_type"><option value="renewal" ${inferredType === "renewal" ? "selected" : ""}>Renewal deadline</option><option value="service" ${inferredType === "service" ? "selected" : ""}>Service interval</option></select></div><div class="field"><label>Item</label><input name="name" required value="${esc(r.name)}" placeholder="${inferredType === "renewal" ? "Registration renewal" : "Oil & filter change"}"></div><div data-reminder-fields="renewal"><div class="field"><label>Due date</label><input name="due_date" type="date" value="${esc(r.due_date || "")}"><div class="hint">For registration, inspection, warranty, or another renewal deadline.</div></div><div class="field"><label class="check-row"><input name="repeats_yearly" type="checkbox" ${r.repeats_yearly ? "checked" : ""}><span>Repeats yearly</span></label></div></div><div data-reminder-fields="service"><div class="row2"><div class="field"><label>Every (${unit()})</label><input name="miles_interval" type="number" min="1" value="${r.miles_interval ? fromStored(r.miles_interval) : ""}"></div><div class="field"><label>Every (months)</label><input name="months_interval" type="number" min="1" value="${r.months_interval ?? ""}"></div></div><div class="row2"><div class="field"><label>Last done (date)</label><input name="last_date" type="date" value="${esc(r.last_date || today())}"></div><div class="field"><label>Last done (${unit()})</label><input name="last_mileage" type="number" min="0" value="${fromStored(r.last_mileage || 0)}"></div></div></div>${actions()}</form>`,
+    `<h2>${r.id ? "Edit" : "Add"} reminder</h2><form id="reminderForm"><div class="field"><label>Reminder type</label><select name="reminder_type"><option value="renewal" ${inferredType === "renewal" ? "selected" : ""}>Renewal deadline</option><option value="service" ${inferredType === "service" ? "selected" : ""}>Service interval</option></select></div><div class="field"><label>Item</label><input name="name" required value="${esc(r.name)}" placeholder="${inferredType === "renewal" ? "Registration renewal" : "Oil & filter change"}"></div><div data-reminder-fields="renewal"><div class="field"><label>Due date</label><input name="due_date" type="date" value="${esc(r.due_date || "")}"><div class="hint">For registration, inspection, warranty, or another renewal deadline.</div></div><div class="field"><label class="check-row"><input name="repeats_yearly" type="checkbox" ${r.repeats_yearly ? "checked" : ""}><span>Repeats yearly</span></label></div><div class="field"><label>Remind me (days before)</label><input name="lead_days_renewal" type="number" min="0" max="730" value="${r.lead_days ?? ""}" placeholder="30"><div class="hint">Leave blank for the default of 30 days. Use 14 for two weeks, 60 for two months.</div></div></div><div data-reminder-fields="service"><div class="row2"><div class="field"><label>Every (${unit()})</label><input name="miles_interval" type="number" min="1" value="${r.miles_interval ? fromStored(r.miles_interval) : ""}"></div><div class="field"><label>Every (months)</label><input name="months_interval" type="number" min="1" value="${r.months_interval ?? ""}"></div></div><div class="row2"><div class="field"><label>Last done (date)</label><input name="last_date" type="date" value="${esc(r.last_date || today())}"></div><div class="field"><label>Last done (${unit()})</label><input name="last_mileage" type="number" min="0" value="${fromStored(r.last_mileage || 0)}"></div></div><div class="row2"><div class="field"><label>Remind me (days before)</label><input name="lead_days_service" type="number" min="0" max="730" value="${r.lead_days ?? ""}" placeholder="auto"></div><div class="field"><label>Remind me (${unit()} before)</label><input name="lead_miles" type="number" min="0" value="${r.lead_miles !== "" && r.lead_miles != null ? fromStored(r.lead_miles) : ""}" placeholder="auto"></div></div><div class="hint">Blank means remind when 80% of the interval is used.</div></div>${actions()}</form>`,
   );
   const form = document.querySelector("#reminderForm"),
     type = form.reminder_type,
@@ -894,6 +927,10 @@ function reminderForm(
     const f = Object.fromEntries(new FormData(e.target)),
       renewal = f.reminder_type === "renewal";
     delete f.reminder_type;
+    const leadRaw = renewal ? f.lead_days_renewal : f.lead_days_service,
+      milesRaw = f.lead_miles;
+    delete f.lead_days_renewal;
+    delete f.lead_days_service;
     Object.assign(f, {
       vehicle_id: state.selected,
       miles_interval: renewal
@@ -904,6 +941,11 @@ function reminderForm(
       months_interval: renewal ? null : +f.months_interval || null,
       due_date: renewal ? f.due_date || null : null,
       repeats_yearly: renewal && !!f.repeats_yearly,
+      lead_days: leadRaw !== "" && leadRaw != null ? +leadRaw : null,
+      lead_miles:
+        !renewal && milesRaw !== "" && milesRaw != null
+          ? toStored(milesRaw)
+          : null,
       last_date: renewal ? r.last_date || today() : f.last_date || today(),
       last_mileage: renewal ? r.last_mileage || 0 : toStored(f.last_mileage),
     });

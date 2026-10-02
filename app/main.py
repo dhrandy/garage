@@ -63,7 +63,7 @@ _api_lock = threading.Lock()
 
 app = FastAPI(
     title="Garage",
-    version="0.2.3",
+    version="0.2.4",
     docs_url=None,
     openapi_url=None,
 )
@@ -447,6 +447,9 @@ def init_db():
             c.execute(
                 "ALTER TABLE reminders ADD COLUMN repeats_yearly INTEGER NOT NULL DEFAULT 0"
             )
+        for column in ("lead_days", "lead_miles"):
+            if column not in reminder_columns:
+                c.execute(f"ALTER TABLE reminders ADD COLUMN {column} INTEGER")
         fuel_columns = {r["name"] for r in c.execute("PRAGMA table_info(fuel_entries)")}
         if "octane" not in fuel_columns:
             c.execute(
@@ -782,6 +785,8 @@ class ReminderIn(BaseModel):
     last_mileage: int = Field(default=0, ge=0)
     due_date: str | None = None
     repeats_yearly: bool = False
+    lead_days: int | None = Field(default=None, ge=0, le=730)
+    lead_miles: int | None = Field(default=None, ge=0, le=100000)
 
     @field_validator("last_date")
     @classmethod
@@ -1791,13 +1796,30 @@ def get_vehicle_or_404(c, vehicle_id: int) -> sqlite3.Row:
     return row
 
 
+def reminder_lead(r, key: str) -> int | None:
+    try:
+        value = r[key]
+    except (KeyError, IndexError):
+        return None
+    return value if value is not None else None
+
+
 def reminder_status(mileage: int, r, today: date | None = None) -> dict[str, Any]:
     today = today or datetime.now(timezone.utc).date()
     progress: list[float] = []
+    states: list[str] = []
     labels: list[str] = []
+    lead_days = reminder_lead(r, "lead_days")
+    lead_miles = reminder_lead(r, "lead_miles")
     if r["miles_interval"]:
         due = r["last_mileage"] + r["miles_interval"]
         progress.append((mileage - r["last_mileage"]) / r["miles_interval"])
+        if due - mileage <= 0:
+            states.append("overdue")
+        elif lead_miles is not None:
+            states.append("soon" if due - mileage <= lead_miles else "ok")
+        else:
+            states.append("soon" if progress[-1] >= 0.8 else "ok")
         labels.append(f"{max(0, due - mileage):,} mi remaining")
     last = iso_date(r["last_date"])
     if r["months_interval"] and last is None:
@@ -1824,6 +1846,12 @@ def reminder_status(mileage: int, r, today: date | None = None) -> dict[str, Any
         total = (due_date - last).days
         progress.append((today - last).days / total if total > 0 else 1)
         days_left = (due_date - today).days
+        if progress[-1] >= 1:
+            states.append("overdue")
+        elif lead_days is not None:
+            states.append("soon" if days_left <= lead_days else "ok")
+        else:
+            states.append("soon" if progress[-1] >= 0.8 else "ok")
         labels.append(
             f"{days_left} days remaining"
             if days_left >= 0
@@ -1858,14 +1886,22 @@ def reminder_status(mileage: int, r, today: date | None = None) -> dict[str, Any
             if due_date < today:
                 due_date = due_date.replace(year=today.year + 1)
         days_left = (due_date - today).days
-        progress.append(1 if days_left < 0 else 0.8 if days_left <= 30 else 0)
+        window = 30 if lead_days is None else lead_days
+        progress.append(1 if days_left < 0 else 0.8 if days_left <= window else 0)
+        states.append(
+            "overdue" if days_left < 0 else "soon" if days_left <= window else "ok"
+        )
         labels.append(
             f"due {due_date.strftime('%b %-d, %Y')}"
             if days_left >= 0
             else f"{-days_left} days late"
         )
     p = max(progress) if progress else 0
-    state = "overdue" if p >= 1 else "soon" if p >= 0.8 else "ok"
+    state = (
+        "overdue"
+        if "overdue" in states
+        else "soon" if "soon" in states else "ok"
+    )
     return {
         "state": state,
         "progress": min(1, p),
@@ -1884,6 +1920,8 @@ def reminder_dict(row):
         "last_mileage": row["last_mileage"],
         "due_date": row["due_date"],
         "repeats_yearly": bool(row["repeats_yearly"]),
+        "lead_days": row["lead_days"],
+        "lead_miles": row["lead_miles"],
     }
 
 
@@ -1908,8 +1946,8 @@ def add_reminder(body: ReminderIn, request: Request):
     with db() as c:
         require_vehicle_edit(get_visible_vehicle(c, body.vehicle_id, user), user)
         cur = c.execute(
-            """INSERT INTO reminders(vehicle_id,name,miles_interval,months_interval,last_date,last_mileage,due_date,repeats_yearly,created_at,updated_at)
-          VALUES(?,?,?,?,?,?,?,?,?,?)""",
+            """INSERT INTO reminders(vehicle_id,name,miles_interval,months_interval,last_date,last_mileage,due_date,repeats_yearly,lead_days,lead_miles,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 body.vehicle_id,
                 body.name.strip(),
@@ -1919,6 +1957,8 @@ def add_reminder(body: ReminderIn, request: Request):
                 body.last_mileage,
                 body.due_date or None,
                 int(body.repeats_yearly),
+                body.lead_days,
+                body.lead_miles,
                 stamp,
                 stamp,
             ),
@@ -1942,7 +1982,7 @@ def update_reminder(item_id: int, body: ReminderIn, request: Request):
         require_vehicle_edit(get_visible_vehicle(c, existing["vehicle_id"], user), user)
         require_vehicle_edit(get_visible_vehicle(c, body.vehicle_id, user), user)
         cur = c.execute(
-            """UPDATE reminders SET vehicle_id=?,name=?,miles_interval=?,months_interval=?,last_date=?,last_mileage=?,due_date=?,repeats_yearly=?,updated_at=? WHERE id=?""",
+            """UPDATE reminders SET vehicle_id=?,name=?,miles_interval=?,months_interval=?,last_date=?,last_mileage=?,due_date=?,repeats_yearly=?,lead_days=?,lead_miles=?,updated_at=? WHERE id=?""",
             (
                 body.vehicle_id,
                 body.name.strip(),
@@ -1952,6 +1992,8 @@ def update_reminder(item_id: int, body: ReminderIn, request: Request):
                 body.last_mileage,
                 body.due_date or None,
                 int(body.repeats_yearly),
+                body.lead_days,
+                body.lead_miles,
                 now_iso(),
                 item_id,
             ),

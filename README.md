@@ -108,6 +108,10 @@ Specs are the single source for the **Fuel**, **Tires**, and **Oil** chips under
 
 Upgrading from a release that stored fuel type, tire size, and oil on the vehicle itself moves those values into specs automatically on first start, and restoring an older backup does the same. Empty spec fields are filled from the old values; if a spec already had a different value, the spec is kept and the old value is saved as a note on that vehicle, so nothing is lost.
 
+## Reminder lead time
+
+Each reminder decides for itself when it counts as due soon. In the reminder form, **Remind me (days before)** sets how many days ahead of the date to flag it, so an inspection can show up two weeks out and a registration two months out. Renewal deadlines flag 30 days ahead when the field is blank. Service intervals also have **Remind me (miles before)**; left blank, they flag once 80% of the mileage or month interval is used. The due bar, due list, vehicle card line, Apprise notifications, and `status` in the REST API all follow each reminder's own lead time. The values are stored as `lead_days` and `lead_miles` on each reminder (both are optional in the API).
+
 ## Maintenance reminders and service logging
 
 The **Maintenance** tab on each vehicle tracks recurring items by miles, months, or both. A service date is optional; undated entries display **Date not set**. When a date is supplied, you can pick **Marks maintenance done** to link the service to one of those items; the item's last-done date and mileage reset to the service entry, so nothing has to be recorded twice. Undated services do not reset or link a maintenance reminder. The same rules apply to `date` and `reminder_id` on the service-create API endpoints.

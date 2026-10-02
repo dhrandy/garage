@@ -487,3 +487,56 @@ def test_due_summary_bar_list_and_card_line(app_url):
             assert errors == []
             page.close()
         browser.close()
+
+
+def test_reminder_lead_time_field(app_url):
+    from datetime import date, timedelta
+
+    due = (date.today() + timedelta(days=20)).isoformat()
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        for width, height in ((1280, 900), (390, 844)):
+            page = browser.new_page(viewport={"width": width, "height": height})
+            errors = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(app_url)
+            page.wait_for_load_state("networkidle")
+            page.locator("[name=username]").fill("admin-test")
+            page.locator("[name=password]").fill("password-123")
+            if page.get_by_role("heading", name="Set up Garage").count():
+                page.get_by_role("button", name="Create administrator").click()
+            else:
+                page.get_by_role("button", name="Sign in").click()
+            expect(page.locator(".vehicle-card").first).to_be_visible()
+            name = f"Lead Car {width}"
+            page.evaluate(
+                """async (n) => {
+                await fetch('/api/vehicles', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:n, year:'2019', mileage:1000, icon:'x'})});
+            }""",
+                name,
+            )
+            page.reload()
+            page.wait_for_load_state("networkidle")
+            page.locator(".vehicle-card", has_text=name).click()
+            page.get_by_role("button", name="Reminders").click()
+            page.get_by_role("button", name="+ Add reminder").click()
+            page.locator("[name=reminder_type]").select_option("renewal")
+            page.locator("[name=name]").fill("State inspection")
+            page.locator("[name=due_date]").fill(due)
+            page.locator("[name=lead_days_renewal]").fill("14")
+            page.screenshot(path=f"/tmp/form_{width}.png")
+            page.locator("[name=reminder_type]").select_option("service")
+            page.screenshot(path=f"/tmp/formsvc_{width}.png")
+            page.locator("[name=reminder_type]").select_option("renewal")
+            page.locator("#reminderForm button.primary").click()
+            expect(page.locator(".rem", has_text="State inspection")).to_be_visible()
+            expect(page.locator(".rem .badge", has_text="OK")).to_be_visible()
+            page.locator("[data-action=edit-reminder]").click()
+            expect(page.locator("[name=lead_days_renewal]")).to_have_value("14")
+            page.locator("[name=lead_days_renewal]").fill("30")
+            page.locator("#reminderForm button.primary").click()
+            expect(page.locator(".rem .badge", has_text="Due soon")).to_be_visible()
+            page.screenshot(path=f"/tmp/lead_{width}.png", full_page=True)
+            assert errors == []
+            page.close()
+        browser.close()
