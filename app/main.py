@@ -63,7 +63,7 @@ _api_lock = threading.Lock()
 
 app = FastAPI(
     title="Garage",
-    version="0.2.2",
+    version="0.2.3",
     docs_url=None,
     openapi_url=None,
 )
@@ -800,6 +800,7 @@ SETTINGS_KEYS = (
     "hide_costs",
     "hide_fuel",
     "hide_notes",
+    "hide_due",
     "use_vehicle_photos",
     "use_kilometers",
 )
@@ -819,6 +820,7 @@ class SettingsIn(BaseModel):
     hide_costs: bool | None = None
     hide_fuel: bool | None = None
     hide_notes: bool | None = None
+    hide_due: bool | None = None
     use_vehicle_photos: bool | None = None
     use_kilometers: bool | None = None
 

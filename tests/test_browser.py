@@ -425,3 +425,65 @@ def test_token_sign_in_desktop_and_mobile(app_url):
             assert page.evaluate("() => document.documentElement.scrollWidth <= window.innerWidth + 1")
             page.close()
         browser.close()
+
+
+def test_due_summary_bar_list_and_card_line(app_url):
+    from datetime import date, timedelta
+
+    def day(n):
+        return (date.today() + timedelta(days=n)).isoformat()
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        for width, height in ((1280, 900), (390, 844)):
+            page = browser.new_page(viewport={"width": width, "height": height})
+            errors = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(app_url)
+            page.wait_for_load_state("networkidle")
+            page.locator("[name=username]").fill("admin-test")
+            page.locator("[name=password]").fill("password-123")
+            if page.get_by_role("heading", name="Set up Garage").count():
+                page.get_by_role("button", name="Create administrator").click()
+            else:
+                page.get_by_role("button", name="Sign in").click()
+            expect(page.locator(".vehicle-card").first).to_be_visible()
+            page.evaluate(
+                """async (d) => {
+                const post = (u, b) => fetch(u, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(b)});
+                let vs = await fetch('/api/vehicles').then(r => r.json());
+                if (!vs.some(v => v.name === 'Due Truck')) {
+                    const v = await post('/api/vehicles', {name:'Due Truck', year:'2021', mileage:48000, icon:'x'}).then(r => r.json());
+                    await post('/api/reminders', {vehicle_id:v.id, name:'Inspection', due_date:d.late, last_date:d.today, last_mileage:0});
+                    await post('/api/reminders', {vehicle_id:v.id, name:'Registration', due_date:d.soon, last_date:d.today, last_mileage:0});
+                    await post('/api/reminders', {vehicle_id:v.id, name:'Oil change', miles_interval:7500, last_date:d.today, last_mileage:41000});
+                }
+            }""",
+                {"late": day(-6), "soon": day(8), "today": day(0)},
+            )
+            page.reload()
+            page.wait_for_load_state("networkidle")
+            bar = page.locator(".due-bar")
+            expect(bar).to_be_visible()
+            expect(bar).to_contain_text("3 due")
+            expect(bar).to_contain_text("1 overdue")
+            rows = page.locator(".due-row")
+            expect(rows).to_have_count(3)
+            expect(rows.first).to_contain_text("Inspection")
+            expect(rows.first).to_contain_text("6d late")
+            expect(rows.nth(1)).to_contain_text("8d left")
+            expect(rows.nth(2)).to_contain_text("500 mi left")
+            card = page.locator(".vehicle-card", has_text="Due Truck")
+            expect(card.locator(".status-text")).to_have_text("Inspection: 6 days late")
+            y_bar = bar.bounding_box()["y"]
+            y_card = card.bounding_box()["y"]
+            assert y_bar < y_card
+            bar.click()
+            page.wait_for_timeout(900)
+            assert page.locator("#dueList").bounding_box()["y"] < height - 150
+            assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+            rows.first.click()
+            expect(page.locator(".detail-title")).to_have_text("Due Truck")
+            assert errors == []
+            page.close()
+        browser.close()

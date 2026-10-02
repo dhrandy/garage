@@ -94,6 +94,8 @@ Administrators can open **Settings** to rename the garage. The name is stored in
 
 Settings also has **Vehicle page sections** checkboxes to hide the Service log, Maintenance, Fuel, Costs, and Notes sections. Hidden sections disappear from every vehicle page for all users. The choices are stored in SQLite and apply to everyone, including non-administrators.
 
+The garage home screen shows a **due summary**: a bar above the vehicle cards ("3 due - 1 overdue - 2 due soon") that scrolls to a **Due** list under the cards. Each row has the vehicle, the item, and a chip such as "6d late", "8d left", or "290 mi left", with overdue items first. Each vehicle card shows only its most urgent item on one line. Settings has a **Hide the due summary bar and list** checkbox that removes the bar and list and brings back the full reminder line on each card.
+
 ## Vehicle specs
 
 On phones, vehicle metadata stays in compact chips and all vehicle tabs remain visible in a two-row navigation grid.

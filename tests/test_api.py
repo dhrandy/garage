@@ -119,6 +119,7 @@ def test_admin_can_rename_garage_and_member_cannot(tmp_path):
             "hide_costs": False,
             "hide_fuel": False,
             "hide_notes": False,
+            "hide_due": False,
             "use_vehicle_photos": False,
             "use_kilometers": False,
         }

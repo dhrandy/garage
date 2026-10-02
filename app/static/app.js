@@ -201,20 +201,94 @@ function reminderStatus(v, r) {
 }
 function vehicleStatus(v) {
   const rows = state.reminders
-      .filter((r) => r.vehicle_id === v.id)
-      .map((r) => ({ r, st: reminderStatus(v, r) })),
-    states = rows.map((x) => x.st.state),
+    .filter((r) => r.vehicle_id === v.id)
+    .map((r) => ({ r, st: reminderStatus(v, r) }));
+  const states = rows.map((x) => x.st.state),
     statusState = states.includes("overdue")
       ? "overdue"
       : states.includes("soon")
         ? "soon"
         : "ok";
+  if (!rows.length) return { state: "ok", label: "No reminders" };
+  if (state.settings.hide_due)
+    return {
+      state: statusState,
+      label: rows.map((x) => `${esc(x.r.name)}: ${esc(x.st.label)}`).join(" · "),
+    };
+  const worst = dueItems().find((i) => i.v.id === v.id);
   return {
     state: statusState,
-    label: rows.length
-      ? rows.map((x) => `${esc(x.r.name)}: ${esc(x.st.label)}`).join(" · ")
-      : "No reminders",
+    label: worst ? `${esc(worst.name)}: ${esc(worst.text)}` : "Nothing due",
   };
+}
+function dueItems() {
+  const out = [];
+  state.vehicles.forEach((v) => {
+    state.reminders
+      .filter((r) => r.vehicle_id === v.id)
+      .forEach((r) => {
+        const st = reminderStatus(v, r);
+        if (st.state === "ok") return;
+        let days = null,
+          miles = null;
+        if (r.due_date)
+          days = Math.ceil(
+            (new Date(`${r.due_date}T12:00:00`) - Date.now()) / 86400000,
+          );
+        if (r.months_interval) {
+          const d = new Date(`${r.last_date}T12:00:00`);
+          d.setMonth(d.getMonth() + r.months_interval);
+          const x = Math.ceil((d - Date.now()) / 86400000);
+          days = days == null ? x : Math.min(days, x);
+        }
+        if (r.miles_interval)
+          miles =
+            r.last_mileage +
+            r.miles_interval -
+            Math.max(v.mileage, v.est_mileage || 0);
+        const plural = (n) => (n === 1 ? "day" : "days");
+        let chip = "",
+          text = "",
+          byDays = false;
+        if (
+          days != null &&
+          (miles == null || (days <= 30 && miles >= 0))
+        ) {
+          byDays = true;
+          chip = days < 0 ? `${-days}d late` : days === 0 ? "today" : `${days}d left`;
+          text = days < 0 ? `${-days} ${plural(-days)} late` : days === 0 ? "due today" : `${days} ${plural(days)} left`;
+        } else if (miles != null) {
+          chip = miles < 0 ? `${dist(-miles)} ${unit()} over` : `${dist(miles)} ${unit()} left`;
+          text = miles < 0 ? `${dist(-miles)} ${unit()} over` : `${dist(miles)} ${unit()} left`;
+        }
+        const sort = byDays ? days : miles != null ? 1000 + miles : 9999;
+        out.push({ v, name: r.name, state: st.state, chip, text, sort });
+      });
+  });
+  return out.sort((a, b) =>
+    a.state === b.state ? a.sort - b.sort : a.state === "overdue" ? -1 : 1,
+  );
+}
+function dueRows(items) {
+  return items
+    .map(
+      (i) =>
+        `<button class="due-row ${i.state}" data-action="open" data-id="${i.v.id}"><span class="dot ${i.state}"></span><span class="due-car">${esc(i.v.name)}</span><span class="due-item">${esc(i.name)}</span><span class="due-chip ${i.state}">${esc(i.chip)}</span></button>`,
+    )
+    .join("");
+}
+function dueBar(items) {
+  if (!items.length || state.settings.hide_due) return "";
+  const over = items.filter((i) => i.state === "overdue").length,
+    soon = items.length - over,
+    parts = [over ? `${over} overdue` : "", soon ? `${soon} due soon` : ""]
+      .filter(Boolean)
+      .join(" · ");
+  return `<button class="due-bar ${over ? "overdue" : "soon"}" data-action="scroll-due" aria-label="${items.length} due, jump to the due list"><span class="dot ${over ? "overdue" : "soon"}"></span><b>${items.length} due</b><span class="due-parts">${parts}</span><span class="due-go">View ↓</span></button>`;
+}
+function dueSection(items) {
+  if (!items.length || state.settings.hide_due) return "";
+  return `<section class="due-section" id="dueList"><h2>Due <span class="due-count">${items.length}</span></h2><div class="due-list">${dueRows(items)}</div></section>`;
 }
 function vicon(v) {
   return state.settings.use_vehicle_photos && v.photo_url
@@ -255,7 +329,7 @@ function garage() {
         .join("")}</div></div></button>`;
     })
     .join("");
-  app.innerHTML = `<h1>${esc(state.settings.garage_name)}</h1><p class="sub">${state.vehicles.length} vehicle${state.vehicles.length === 1 ? "" : "s"}</p>${state.user.is_admin ? `<div class="vehicle-view-toggle"><label class="check-row"><input type="checkbox" data-action="show-all-vehicles" ${state.user.show_all_vehicles ? "checked" : ""}><span>Show all vehicles</span></label><span class="hint">Include private vehicles owned by other users.</span></div>` : ""}<div class="grid">${cards || '<div class="empty">No vehicles visible.</div>'}</div><div style="margin-top:18px"><button class="primary" data-action="add-vehicle">+ Add vehicle</button></div>`;
+  app.innerHTML = `<h1>${esc(state.settings.garage_name)}</h1><p class="sub">${state.vehicles.length} vehicle${state.vehicles.length === 1 ? "" : "s"}</p>${state.user.is_admin ? `<div class="vehicle-view-toggle"><label class="check-row"><input type="checkbox" data-action="show-all-vehicles" ${state.user.show_all_vehicles ? "checked" : ""}><span>Show all vehicles</span></label><span class="hint">Include private vehicles owned by other users.</span></div>` : ""}${dueBar(dueItems())}<div class="grid">${cards || '<div class="empty">No vehicles visible.</div>'}</div>${dueSection(dueItems())}<div style="margin-top:18px"><button class="primary" data-action="add-vehicle">+ Add vehicle</button></div>`;
 }
 function visibleTabs() {
   const h = state.settings || {};
@@ -862,7 +936,7 @@ async function settingsView() {
     )
     .join("");
   const adminSettings = isAdmin
-    ? `<div class="card settings-card"><form id="settingsForm"><div class="field"><label>Garage name</label><input name="garage_name" required maxlength="80" value="${esc(s.garage_name)}"><div class="hint">Shown in the header and on the garage home screen.</div></div><h2>Vehicle page sections</h2><p class="hint">Hidden sections disappear from every vehicle page for all users.</p>${cb("hide_maintenance", "Hide Maintenance")}${cb("hide_fuel", "Hide Fuel")}${cb("hide_costs", "Hide Costs")}${cb("hide_notes", "Hide Notes")}<h2>Vehicle photos</h2>${cb("use_vehicle_photos", "Use vehicle photos as card icons")}<h2>Distance units</h2>${cb("use_kilometers", "Use kilometers and L/100km")}<p class="hint">When off, vehicles show their emoji icon instead.</p><button class="primary">Save settings</button></form></div>`
+    ? `<div class="card settings-card"><form id="settingsForm"><div class="field"><label>Garage name</label><input name="garage_name" required maxlength="80" value="${esc(s.garage_name)}"><div class="hint">Shown in the header and on the garage home screen.</div></div><h2>Vehicle page sections</h2><p class="hint">Hidden sections disappear from every vehicle page for all users.</p>${cb("hide_maintenance", "Hide Maintenance")}${cb("hide_fuel", "Hide Fuel")}${cb("hide_costs", "Hide Costs")}${cb("hide_notes", "Hide Notes")}<h2>Garage home screen</h2>${cb("hide_due", "Hide the due summary bar and list")}<h2>Vehicle photos</h2>${cb("use_vehicle_photos", "Use vehicle photos as card icons")}<h2>Distance units</h2>${cb("use_kilometers", "Use kilometers and L/100km")}<p class="hint">When off, vehicles show their emoji icon instead.</p><button class="primary">Save settings</button></form></div>`
     : "";
   const notifications = isAdmin
     ? `<div class="card settings-card" style="margin-top:14px"><h2>Notifications</h2><p class="hint">Once a day Garage checks maintenance items against current or estimated mileage and dates, and sends one notification when an item newly becomes due soon or overdue. Add one or more Apprise URLs, one per line (discord://, tgram://, mailto://, ...). An http(s) URL receives a plain JSON webhook POST instead.</p><form id="notifyForm"><div class="field"><label>Apprise URLs</label><textarea name="apprise_urls" placeholder="tgram://bot_token/chat_id">${esc(notifySettings.apprise_urls)}</textarea></div><div class="modal-actions" style="margin-top:0"><button class="primary">Save</button><button type="button" class="small" data-action="test-notify">Send test notification</button></div></form></div>`
@@ -878,6 +952,7 @@ async function settingsView() {
         "hide_fuel",
         "hide_costs",
         "hide_notes",
+        "hide_due",
         "use_vehicle_photos",
         "use_kilometers",
       ])
@@ -945,6 +1020,10 @@ document.addEventListener("click", async (e) => {
   const a = b.dataset.action,
     id = +b.dataset.id;
   if (!["toggle-menu", "refresh"].includes(a)) closeHeaderMenu();
+  if (a === "scroll-due") {
+    document.querySelector("#dueList")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
   if (a === "close") {
     if (e.target === b || b.tagName === "BUTTON") close();
   } else if (a === "toggle-menu") {
