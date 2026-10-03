@@ -1,3 +1,5 @@
+![Garage app banner](docs/banner.png)
+
 # Garage
 
 [![Beta](https://img.shields.io/badge/status-beta-orange)](https://github.com/dhrandy/garage)
