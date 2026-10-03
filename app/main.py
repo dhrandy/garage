@@ -63,7 +63,7 @@ _api_lock = threading.Lock()
 
 app = FastAPI(
     title="Garage",
-    version="0.2.4",
+    version="0.2.5",
     docs_url=None,
     openapi_url=None,
 )
@@ -1531,8 +1531,9 @@ def fuel_rows(c, vehicle_id: int | None = None) -> list[dict[str, Any]]:
         (vehicle_id, vehicle_id),
     ).fetchall()
     out: list[dict[str, Any]] = []
-    prev: sqlite3.Row | None = None
+    previous_by_vehicle: dict[int, sqlite3.Row] = {}
     for r in rows:
+        prev = previous_by_vehicle.get(r["vehicle_id"])
         mpg = None
         if prev is not None and r["odometer"] > prev["odometer"]:
             mpg = (r["odometer"] - prev["odometer"]) / r["gallons"]
@@ -1551,7 +1552,7 @@ def fuel_rows(c, vehicle_id: int | None = None) -> list[dict[str, Any]]:
                 "updated_at": r["updated_at"],
             }
         )
-        prev = r
+        previous_by_vehicle[r["vehicle_id"]] = r
     out.reverse()
     return out
 

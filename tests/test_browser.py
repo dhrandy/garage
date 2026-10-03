@@ -540,3 +540,77 @@ def test_reminder_lead_time_field(app_url):
             assert errors == []
             page.close()
         browser.close()
+
+
+def test_home_mpg_does_not_mix_interleaved_vehicle_fills(app_url):
+    with httpx.Client(base_url=app_url) as client:
+        assert (
+            client.post(
+                "/api/login",
+                json={"username": "admin-test", "password": "password-123"},
+            ).status_code
+            == 200
+        )
+        assert (
+            client.post(
+                "/api/users",
+                json={
+                    "username": "fuel-demo",
+                    "password": "password-789",
+                    "is_admin": False,
+                },
+            ).status_code
+            == 200
+        )
+    with httpx.Client(base_url=app_url) as client:
+        assert (
+            client.post(
+                "/api/login", json={"username": "fuel-demo", "password": "password-789"}
+            ).status_code
+            == 200
+        )
+        ids = []
+        for name in ("Demo Coupe", "Demo Sedan"):
+            response = client.post("/api/vehicles", json={"name": name, "mileage": 0})
+            assert response.status_code == 200
+            ids.append(response.json()["id"])
+        for vehicle_id, fill_date, odometer, gallons in (
+            (ids[0], "2026-09-01", 1000, 10),
+            (ids[1], "2026-09-02", 50000, 10),
+            (ids[0], "2026-09-03", 1300, 10),
+            (ids[1], "2026-09-04", 50200, 10),
+            (ids[0], "2026-09-05", 1700, 20),
+            (ids[1], "2026-09-05", 50500, 10),
+        ):
+            assert (
+                client.post(
+                    "/api/fuel",
+                    json={
+                        "vehicle_id": vehicle_id,
+                        "date": fill_date,
+                        "odometer": odometer,
+                        "gallons": gallons,
+                        "cost": 35,
+                    },
+                ).status_code
+                == 200
+            )
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        for width, height in ((1280, 800), (900, 760), (390, 844)):
+            page = browser.new_page(viewport={"width": width, "height": height})
+            page.goto(app_url)
+            page.locator("[name=username]").fill("fuel-demo")
+            page.locator("[name=password]").fill("password-789")
+            page.get_by_role("button", name="Sign in").click()
+            coupe = page.locator(".vehicle-card").filter(has_text="Demo Coupe")
+            sedan = page.locator(".vehicle-card").filter(has_text="Demo Sedan")
+            expect(coupe.locator(".vc-mpg")).to_have_text("23.3 mpg average")
+            expect(sedan.locator(".vc-mpg")).to_have_text("25.0 mpg average")
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            page.screenshot(path=f"/tmp/garage-mpg-{width}.png", full_page=True)
+            coupe.click()
+            page.get_by_role("button", name="Fuel", exact=True).click()
+            expect(page.locator("#tabBody")).to_contain_text("23.3")
+            page.close()
+        browser.close()

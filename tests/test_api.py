@@ -3218,3 +3218,89 @@ def test_reminder_lead_times(tmp_path):
             admin.post("/api/reminders", json={**body, "lead_days": -1}).status_code
             == 422
         )
+
+
+def test_interleaved_fuel_entries_stay_with_their_vehicle(tmp_path):
+    main.DB_PATH = tmp_path / "interleaved-fuel.db"
+    main._login_failures.clear()
+    main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post(
+            "/api/setup", json={"username": "admin-test", "password": "password-123"}
+        )
+        second_vehicle = admin.post(
+            "/api/vehicles", json={"name": "Test Sedan", "year": "2020", "mileage": 0}
+        ).json()["id"]
+        fills = [
+            (1, "2026-09-01", 1000, 10),
+            (second_vehicle, "2026-09-02", 50000, 10),
+            (1, "2026-09-03", 1300, 10),
+            (second_vehicle, "2026-09-04", 50200, 10),
+            (1, "2026-09-05", 1700, 20),
+            (second_vehicle, "2026-09-05", 50500, 10),
+        ]
+        for vehicle_id, fill_date, odometer, gallons in fills:
+            response = admin.post(
+                "/api/fuel",
+                json={
+                    "vehicle_id": vehicle_id,
+                    "date": fill_date,
+                    "odometer": odometer,
+                    "gallons": gallons,
+                    "cost": 35,
+                },
+            )
+            assert response.status_code == 200
+        all_rows = admin.get("/api/fuel").json()
+        assert [row["odometer"] for row in all_rows] == [
+            50500,
+            1700,
+            50200,
+            1300,
+            50000,
+            1000,
+        ]
+        for vehicle_id, expected in (
+            (1, [20.0, 30.0, None]),
+            (second_vehicle, [30.0, 20.0, None]),
+        ):
+            vehicle_rows = [row for row in all_rows if row["vehicle_id"] == vehicle_id]
+            assert [row["mpg"] for row in vehicle_rows] == expected
+            assert (
+                vehicle_rows == admin.get(f"/api/fuel?vehicle_id={vehicle_id}").json()
+            )
+
+        # A hidden vehicle must neither leak nor influence a member's MPG.
+        admin.post(
+            "/api/users",
+            json={
+                "username": "member-test",
+                "password": "password-456",
+                "is_admin": False,
+            },
+        )
+    with TestClient(main.app) as member:
+        member.post(
+            "/api/login", json={"username": "member-test", "password": "password-456"}
+        )
+        own_id = member.post(
+            "/api/vehicles", json={"name": "Member Coupe", "mileage": 0}
+        ).json()["id"]
+        for fill_date, odometer in (("2026-09-02", 10000), ("2026-09-04", 10250)):
+            assert (
+                member.post(
+                    "/api/fuel",
+                    json={
+                        "vehicle_id": own_id,
+                        "date": fill_date,
+                        "odometer": odometer,
+                        "gallons": 10,
+                        "cost": 35,
+                    },
+                ).status_code
+                == 200
+            )
+        rows = member.get("/api/fuel").json()
+        assert [row["vehicle_id"] for row in rows] == [own_id, own_id]
+        assert [row["mpg"] for row in rows] == [25.0, None]
+        assert member.get("/api/fuel?vehicle_id=1").json() == []
