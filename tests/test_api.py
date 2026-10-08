@@ -3304,3 +3304,41 @@ def test_interleaved_fuel_entries_stay_with_their_vehicle(tmp_path):
         assert [row["vehicle_id"] for row in rows] == [own_id, own_id]
         assert [row["mpg"] for row in rows] == [25.0, None]
         assert member.get("/api/fuel?vehicle_id=1").json() == []
+
+
+def test_towing_fuel_forms_edits_and_old_backup(tmp_path):
+    main.DB_PATH = tmp_path / "garage.db"
+    main.init_db()
+    with TestClient(main.app) as client:
+        client.post("/api/setup", json={"username": "tow-test", "password": "password-123"})
+        token = client.post("/api/tokens", json={"name": "fuel-test"}).json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        first = client.post("/api/fuel", json={"vehicle_id": 1, "date": "2026-10-01", "odometer": 1000, "gallons": 10}).json()
+        assert first["towing"] is False and first["mpg"] is None
+        normal = client.post("/api/v1/vehicles/1/fuel", headers=headers, data={"date": "2026-10-02", "odometer": 1300, "gallons": 10, "cost": 35}).json()
+        assert normal["mpg"] == 30 and normal["towing"] is False
+        towing = client.post("/api/v1/vehicles/1/fuel", headers=headers, data={"date": "2026-10-03", "odometer": 1500, "gallons": 20, "towing": "true"})
+        assert towing.status_code == 201
+        assert towing.json()["towing"] is True and towing.json()["mpg"] == 10
+        fill = towing.json()
+        edited = client.put(f'/api/fuel/{fill["id"]}', json={**fill, "towing": False})
+        assert edited.status_code == 200 and edited.json()["towing"] is False
+        client.put(f'/api/fuel/{fill["id"]}', json={**fill, "towing": True})
+        backup = client.get("/api/export").json()
+        assert backup["tables"]["fuel_entries"][-1]["towing"] == 1
+        for row in backup["tables"]["fuel_entries"]:
+            row.pop("towing")
+        assert client.post("/api/import", json=backup).status_code == 200
+        client.post("/api/login", json={"username": "tow-test", "password": "password-123"})
+        assert all(not f["towing"] for f in client.get("/api/fuel").json())
+
+
+def test_towing_column_migrates_existing_database(tmp_path):
+    import sqlite3
+    main.DB_PATH = tmp_path / "garage.db"
+    main.init_db()
+    with sqlite3.connect(main.DB_PATH) as conn:
+        conn.execute("ALTER TABLE fuel_entries DROP COLUMN towing")
+    main.init_db()
+    with sqlite3.connect(main.DB_PATH) as conn:
+        assert "towing" in {r[1] for r in conn.execute("PRAGMA table_info(fuel_entries)")}

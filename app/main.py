@@ -63,7 +63,7 @@ _api_lock = threading.Lock()
 
 app = FastAPI(
     title="Garage",
-    version="0.2.5",
+    version="0.2.6",
     docs_url=None,
     openapi_url=None,
 )
@@ -451,6 +451,11 @@ def init_db():
             if column not in reminder_columns:
                 c.execute(f"ALTER TABLE reminders ADD COLUMN {column} INTEGER")
         fuel_columns = {r["name"] for r in c.execute("PRAGMA table_info(fuel_entries)")}
+        if "towing" not in fuel_columns:
+            c.execute(
+                "ALTER TABLE fuel_entries ADD COLUMN towing INTEGER NOT NULL DEFAULT 0 "
+                "CHECK(towing IN (0,1))"
+            )
         if "octane" not in fuel_columns:
             c.execute(
                 "ALTER TABLE fuel_entries ADD COLUMN octane TEXT NOT NULL DEFAULT ''"
@@ -769,6 +774,7 @@ class FuelIn(BaseModel):
     gallons: float = Field(gt=0)
     cost: float = Field(default=0, ge=0)
     octane: str = Field(default="", max_length=20)
+    towing: bool = False
 
     @field_validator("date")
     @classmethod
@@ -1546,6 +1552,7 @@ def fuel_rows(c, vehicle_id: int | None = None) -> list[dict[str, Any]]:
                 "gallons": r["gallons"],
                 "cost": r["cost"],
                 "octane": r["octane"],
+                "towing": bool(r["towing"]),
                 "mpg": mpg,
                 "logged_by": display_user(c, r["logged_by"]),
                 "created_at": r["created_at"],
@@ -1581,7 +1588,7 @@ def add_fuel(body: FuelIn, request: Request):
         ).fetchone():
             raise HTTPException(404, "Vehicle not found")
         cur = c.execute(
-            "INSERT INTO fuel_entries(vehicle_id,fill_date,odometer,gallons,cost,octane,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO fuel_entries(vehicle_id,fill_date,odometer,gallons,cost,octane,towing,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
             (
                 body.vehicle_id,
                 body.date,
@@ -1589,6 +1596,7 @@ def add_fuel(body: FuelIn, request: Request):
                 body.gallons,
                 body.cost,
                 body.octane.strip(),
+                int(body.towing),
                 user["id"],
                 stamp,
                 stamp,
@@ -1610,7 +1618,7 @@ def update_fuel(item_id: int, body: FuelIn, request: Request):
         require_vehicle_edit(get_visible_vehicle(c, existing["vehicle_id"], user), user)
         require_vehicle_edit(get_visible_vehicle(c, body.vehicle_id, user), user)
         cur = c.execute(
-            "UPDATE fuel_entries SET vehicle_id=?,fill_date=?,odometer=?,gallons=?,cost=?,octane=?,updated_at=? WHERE id=?",
+            "UPDATE fuel_entries SET vehicle_id=?,fill_date=?,odometer=?,gallons=?,cost=?,octane=?,towing=?,updated_at=? WHERE id=?",
             (
                 body.vehicle_id,
                 body.date,
@@ -1618,6 +1626,7 @@ def update_fuel(item_id: int, body: FuelIn, request: Request):
                 body.gallons,
                 body.cost,
                 body.octane.strip(),
+                int(body.towing),
                 now_iso(),
                 item_id,
             ),
@@ -2692,6 +2701,7 @@ async def v1_add_fuel(
     odometer: int = Form(..., ge=0),
     gallons: float = Form(..., gt=0),
     cost: float = Form(0, ge=0),
+    towing: bool = Form(False),
     file: UploadFile | None = File(None),
     _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
 ):
@@ -2714,13 +2724,14 @@ async def v1_add_fuel(
         user = token_user(c, token)
         require_vehicle_edit(get_visible_vehicle(c, vehicle_id, user), user)
         cur = c.execute(
-            "INSERT INTO fuel_entries(vehicle_id,fill_date,odometer,gallons,cost,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+            "INSERT INTO fuel_entries(vehicle_id,fill_date,odometer,gallons,cost,towing,logged_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
             (
                 vehicle_id,
                 date,
                 odometer,
                 gallons,
                 cost,
+                int(towing),
                 token["created_by"],
                 stamp,
                 stamp,

@@ -124,7 +124,7 @@ Garage learns each vehicle's driving pace from dated odometer readings in servic
 
 ## Fuel log
 
-Each vehicle has a **Fuel** tab for fill-ups: date, odometer, gallons, and total cost. MPG is computed automatically between consecutive fill-ups, and the tab shows the running average MPG and fuel cost per mile. Logging a fill-up also raises the vehicle's recorded mileage when the odometer reading is higher. Fuel entries are included in JSON exports and imports.
+Each vehicle has a **Fuel** tab for fill-ups: date, odometer, gallons, and total cost. MPG is computed automatically between consecutive fill-ups, and the tab shows the running average MPG and fuel cost per mile. Logging a fill-up also raises the vehicle's recorded mileage when the odometer reading is higher. Each fill shows its MPG from the previous fill for that vehicle; the first fill (or a non-increasing odometer) has no MPG. Mark **Towing** if the driving since the previous fill included towing. The Fuel tab shows separate gallon-weighted averages for towing and non-towing fills, excluding fills without a measured interval. Fill the tank each time for a useful comparison. Existing fills default to not towing and can be edited. The units setting applies to these averages and per-fill readings too. Fuel entries are included in JSON exports and imports.
 
 ## Notes
 
@@ -197,7 +197,7 @@ Endpoints (all relative to `http://your-server:8917`):
 - `PUT /api/v1/vehicles/{id}/specs` — create or replace detailed specs (engine, transmission, drivetrain, dimensions, capacities, `wheel_size`, `tire_size`, `fuel_type`, and related fields). `wheel_size` and `tire_size` are separate, so values such as `17 × 7 in` and `195/65R15` are stored independently. `tire_size` and `fuel_type` are kept as-is when left out of the request; send an empty string to clear them. Vehicle listings still return `fuel_type`, `tire_size`, and `oil_spec`, read from specs.
 - `PUT /api/v1/vehicles/{id}/mileage` — update the odometer directly (JSON: `mileage`, optional `date`), same as the app's Update mileage button
 - `POST /api/v1/vehicles/{id}/services` — log a service entry (JSON; `date` is optional, and an undated service ignores `reminder_id`)
-- `POST /api/v1/vehicles/{id}/fuel` — log a fill-up (multipart form, optional receipt `file`)
+- `POST /api/v1/vehicles/{id}/fuel` — log a fill-up (URL-encoded form without a receipt, or multipart form with optional receipt `file`; optional `towing=true`, default false)
 - `POST /api/v1/vehicles/{id}/notes` — add a note (JSON: `date`, `body`)
 - `POST /api/v1/vehicles/{id}/mods` — add a modification (JSON: `name`, optional `date`, `price`, `torque_specs`, `gotchas`, `youtube_url`)
 
@@ -209,12 +209,26 @@ curl -X POST -H "Authorization: Bearer gar_..." -H "Content-Type: application/js
   -d '{"date":"2026-09-21","mileage":24310,"type":"Oil change","cost":54.99,"provider":"DIY"}' \
   http://your-server:8917/api/v1/vehicles/1/services
 
+# Log a fill-up without a receipt (URL-encoded form)
+curl -X POST -H "Authorization: Bearer gar_..." \
+  --data-urlencode date=2026-09-21 --data-urlencode odometer=24310 \
+  --data-urlencode gallons=10.2 --data-urlencode cost=36.50 \
+  --data-urlencode towing=true \
+  http://your-server:8917/api/v1/vehicles/1/fuel
+
+# Update mileage only (JSON body)
+curl -X PUT -H "Authorization: Bearer gar_..." -H "Content-Type: application/json" \
+  -d '{"mileage":24610,"date":"2026-09-22"}' \
+  http://your-server:8917/api/v1/vehicles/1/mileage
+
 # Log a fill-up with a receipt photo
 curl -X POST -H "Authorization: Bearer gar_..." \
   -F date=2026-09-21 -F odometer=24310 -F gallons=10.2 -F cost=36.50 \
   -F file=@receipt.jpg \
   http://your-server:8917/api/v1/vehicles/1/fuel
 ```
+
+Fuel `cost` is the total paid, not the price per gallon. A fill also raises the vehicle odometer when the reading is higher, so it does not need a second mileage request. URL-encoded fuel and JSON mileage examples above need no receipt upload. After a timeout, read the fuel history before retrying to avoid a duplicate.
 
 API requests are rate limited: 100 requests per minute per token, and repeated invalid tokens from one address are blocked for 15 minutes, mirroring the login protection. `429` responses carry a `Retry-After` header.
 

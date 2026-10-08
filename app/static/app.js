@@ -614,27 +614,29 @@ function remindersTab(v) {
     .join("");
   return `${canEdit(v) ? `<div class="toolbar"><button class="primary" data-action="add-reminder">+ Add reminder</button></div>` : ""}<div class="card">${rows || '<div class="empty">No maintenance items yet.</div>'}</div>`;
 }
+function fuelAverage(rows) {
+  const measured = rows.filter((f) => f.mpg != null);
+  const miles = measured.reduce((sum, f) => sum + f.mpg * f.gallons, 0);
+  const gallons = measured.reduce((sum, f) => sum + f.gallons, 0);
+  return {
+    mpg: gallons ? miles / gallons : null,
+    costPerMile: miles ? measured.reduce((sum, f) => sum + f.cost, 0) / miles : null,
+    count: measured.length,
+  };
+}
 function fuelTab(v) {
   const rows = state.fuel.filter((f) => f.vehicle_id === v.id);
-  let tm = 0,
-    tg = 0,
-    tc = 0;
-  rows.forEach((f) => {
-    if (f.mpg != null) {
-      tm += f.mpg * f.gallons;
-      tg += f.gallons;
-      tc += f.cost;
-    }
-  });
-  const avg = tg ? tm / tg : null,
-    cpm = tm ? tc / tm : null;
+  const overall = fuelAverage(rows);
+  const normal = fuelAverage(rows.filter((f) => !f.towing));
+  const towing = fuelAverage(rows.filter((f) => f.towing));
+  const averageCard = (label, stats) => `<div class="fuel-stat"><div class="hint">${label}</div><div class="cost-total">${stats.mpg != null ? efficiency(stats.mpg) : "--"}</div><div class="hint">${stats.count ? `${stats.count} measured ${stats.count === 1 ? "fill" : "fills"}` : "No measured fills yet"}</div></div>`;
   const list = rows
     .map(
       (f) =>
-        `<div class="entry"><div class="e-top"><div class="e-type">${dist(f.odometer)} ${unit()}</div><div class="e-cost">${f.cost ? money(f.cost) : ""}</div></div><div class="e-sub">${date(f.date)} · ${f.gallons} gal${f.octane ? ` · ${esc(f.octane)} octane` : ""}${f.mpg != null ? ` · ${efficiency(f.mpg)}` : ""}${f.logged_by ? ` · entered by ${esc(f.logged_by)}` : ""}</div>${receiptThumbs("fuel", f.id)}${canEdit(v) ? `<div class="e-actions"><button class="small ghost" data-action="edit-fuel" data-id="${f.id}">Edit</button><button class="small ghost danger" data-action="delete-fuel" data-id="${f.id}">Delete</button></div>` : ""}</div>`,
+        `<div class="entry"><div class="e-top"><div class="e-type">${dist(f.odometer)} ${unit()}${f.towing ? ' <span class="towing-badge">Towing</span>' : ""}</div><div class="e-cost">${f.cost ? money(f.cost) : ""}</div></div><div class="fill-efficiency">${f.mpg != null ? efficiency(f.mpg) : "MPG unavailable"}</div><div class="e-sub">${date(f.date)} · ${f.gallons} gal${f.octane ? ` · ${esc(f.octane)} octane` : ""}${f.logged_by ? ` · entered by ${esc(f.logged_by)}` : ""}</div>${f.mpg == null ? '<div class="hint">Needs a previous fill with a lower odometer.</div>' : ""}${receiptThumbs("fuel", f.id)}${canEdit(v) ? `<div class="e-actions"><button class="small ghost" data-action="edit-fuel" data-id="${f.id}">Edit</button><button class="small ghost danger" data-action="delete-fuel" data-id="${f.id}">Delete</button></div>` : ""}</div>`,
     )
     .join("");
-  return `<div class="card stats" style="margin-bottom:14px"><div class="row2"><div><div class="cost-total">${avg != null ? avg.toFixed(1) : "—"}</div><div class="hint">running avg MPG</div></div><div><div class="cost-total">${cpm != null ? "$" + cpm.toFixed(3) : "—"}</div><div class="hint">fuel cost per mile</div></div></div></div>${canEdit(v) ? `<div class="toolbar"><button class="primary" data-action="add-fuel">+ Log fill-up</button></div>` : ""}<div class="card">${list || '<div class="empty">No fill-ups logged yet.</div>'}</div>`;
+  return `<div class="card stats fuel-stats" style="margin-bottom:14px"><div class="fuel-average-grid">${averageCard("Not towing average", normal)}${averageCard("Towing average", towing)}</div><div class="fuel-overall hint">All fills: ${overall.mpg != null ? efficiency(overall.mpg) : "--"} average · ${overall.costPerMile != null ? "$" + overall.costPerMile.toFixed(3) + " per mile" : "Cost per mile unavailable"}</div><p class="hint fuel-method">Mark towing if you towed since the previous fill. MPG uses miles since that fill; fill the tank each time for a useful comparison.</p></div>${canEdit(v) ? `<div class="toolbar"><button class="primary" data-action="add-fuel">+ Log fill-up</button></div>` : ""}<div class="card">${list || '<div class="empty">No fill-ups logged yet.</div>'}</div>`;
 }
 function notesTab(v) {
   const rows = state.notes.filter((n) => n.vehicle_id === v.id);
@@ -867,10 +869,11 @@ function fuelForm(
     gallons: "",
     cost: "",
     octane: "",
+    towing: false,
   },
 ) {
   modal(
-    `<h2>${f.id ? "Edit" : "Log"} fill-up</h2><form id="fuelForm"><div class="row2"><div class="field"><label>Date</label><input name="date" type="date" required value="${esc(f.date)}"></div><div class="field"><label>Odometer (${unit()})</label><input name="odometer" type="number" min="0" required value="${fromStored(f.odometer)}"></div></div><div class="row2"><div class="field"><label>Gallons</label><input name="gallons" type="number" min="0.01" step="any" required value="${f.gallons}"></div><div class="field"><label>Total cost ($)</label><input name="cost" type="number" min="0" step=".01" value="${f.cost}"></div></div><div class="field"><label>Octane (optional)</label><input name="octane" list="octaneOptions" maxlength="20" value="${esc(f.octane || "")}" placeholder="87, 89, 91, 93, or other"><datalist id="octaneOptions"><option value="87"><option value="89"><option value="91"><option value="93"></datalist></div>${receiptField}${f.id ? receiptAdmin("fuel", f.id) : ""}${actions()}</form>`,
+    `<h2>${f.id ? "Edit" : "Log"} fill-up</h2><form id="fuelForm"><div class="row2"><div class="field"><label>Date</label><input name="date" type="date" required value="${esc(f.date)}"></div><div class="field"><label>Odometer (${unit()})</label><input name="odometer" type="number" min="0" required value="${fromStored(f.odometer)}"></div></div><div class="row2"><div class="field"><label>Gallons</label><input name="gallons" type="number" min="0.01" step="any" required value="${f.gallons}"></div><div class="field"><label>Total cost ($)</label><input name="cost" type="number" min="0" step=".01" value="${f.cost}"></div></div><div class="field"><label>Octane (optional)</label><input name="octane" list="octaneOptions" maxlength="20" value="${esc(f.octane || "")}" placeholder="87, 89, 91, 93, or other"><datalist id="octaneOptions"><option value="87"><option value="89"><option value="91"><option value="93"></datalist></div><label class="towing-toggle"><input name="towing" type="checkbox" ${f.towing ? "checked" : ""}><span><b>Towing</b><small>I towed since the previous fill-up.</small></span></label>${receiptField}${f.id ? receiptAdmin("fuel", f.id) : ""}${actions()}</form>`,
   );
   document.querySelector("#fuelForm").onsubmit = async (e) => {
     e.preventDefault();
@@ -880,6 +883,7 @@ function fuelForm(
       odometer: toStored(x.odometer),
       gallons: +x.gallons,
       cost: +x.cost || 0,
+      towing: e.target.elements.towing.checked,
     });
     const savedFuel = await api(f.id ? `/fuel/${f.id}` : "/fuel", {
       method: f.id ? "PUT" : "POST",
