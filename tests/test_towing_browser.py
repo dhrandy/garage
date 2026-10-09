@@ -1,7 +1,7 @@
 import os
 import subprocess
+import sys
 import time
-from pathlib import Path
 
 import httpx
 from playwright.sync_api import expect, sync_playwright
@@ -9,7 +9,7 @@ from playwright.sync_api import expect, sync_playwright
 
 def test_towing_desktop_and_mobile(tmp_path):
     env = {**os.environ, "GARAGE_DATA_DIR": str(tmp_path), "GARAGE_NOTIFY_WORKER": "false"}
-    proc = subprocess.Popen([str(Path('.venv/bin/uvicorn').resolve()), "app.main:app", "--port", "8766"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc = subprocess.Popen([sys.executable, "-m", "uvicorn", "app.main:app", "--port", "8766"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     url = "http://127.0.0.1:8766"
     try:
         for _ in range(70):
@@ -41,7 +41,7 @@ def test_towing_desktop_and_mobile(tmp_path):
                 expect(page.locator('.fill-efficiency').first).to_have_text('10.0 mpg')
                 expect(page.locator('.fill-efficiency').last).to_have_text('MPG unavailable')
                 assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
-                page.screenshot(path=f'/downloads/garage-towing-fuel-{width}.png',full_page=True)
+                page.screenshot(path=str(tmp_path / f'garage-towing-fuel-{width}.png'),full_page=True)
                 page.get_by_role('button',name='+ Log fill-up',exact=True).click()
                 page.locator('#fuelForm [name=date]').fill('2026-09-11')
                 page.locator('#fuelForm [name=odometer]').fill('11200')
@@ -50,7 +50,7 @@ def test_towing_desktop_and_mobile(tmp_path):
                 page.locator('#fuelForm [name=towing]').check()
                 expect(page.locator('#fuelForm [name=towing]')).to_be_checked()
                 assert page.locator('.towing-toggle').bounding_box()['height'] >= 64
-                page.screenshot(path=f'/downloads/garage-towing-form-{width}.png',full_page=False)
+                page.screenshot(path=str(tmp_path / f'garage-towing-form-{width}.png'),full_page=False)
                 page.locator('#fuelForm').get_by_role('button',name='Save',exact=True).click()
                 expect(page.locator('.towing-badge').first).to_be_visible()
                 # Edit preservation and toggling are checked through the actual form.
