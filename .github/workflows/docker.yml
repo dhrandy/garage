@@ -48,7 +48,7 @@ jobs:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=latest
-            type=raw,value=v0.2.6
+            type=raw,value=v0.2.7
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.description=A simple self-hosted vehicle maintenance tracker. Self-hosted, multi-user, one Docker container with SQLite storage.
