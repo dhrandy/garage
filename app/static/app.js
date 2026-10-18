@@ -16,6 +16,17 @@ const state = {
   selected: null,
   tab: "log",
 };
+// Render http/https URLs in user text as links; everything else stays escaped.
+const linkify = (s) =>
+  String(s ?? "")
+    .split(/(https?:\/\/[^\s<>"']+)/g)
+    .map((part, i) => {
+      if (i % 2 === 0) return esc(part);
+      const trail = part.match(/[.,;:!?)]+$/)?.[0] || "";
+      const url = part.slice(0, part.length - trail.length);
+      return `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a>${esc(trail)}`;
+    })
+    .join("");
 const esc = (s) =>
   String(s ?? "").replace(
     /[&<>'"]/g,
@@ -658,7 +669,7 @@ function notesTab(v) {
   const list = rows
     .map(
       (n) =>
-        `<div class="entry"><div class="e-top"><div class="e-type">${date(n.date)}</div></div><div class="e-sub">${esc(n.body)}${n.logged_by ? ` · entered by ${esc(n.logged_by)}` : ""}</div>${canEdit(v) ? `<div class="e-actions"><button class="small ghost" data-action="edit-note" data-id="${n.id}">Edit</button><button class="small ghost danger" data-action="delete-note" data-id="${n.id}">Delete</button></div>` : ""}</div>`,
+        `<div class="entry"><div class="e-top"><div class="e-type">${date(n.date)}</div></div><div class="e-sub">${linkify(n.body)}${n.logged_by ? ` · entered by ${esc(n.logged_by)}` : ""}</div>${canEdit(v) ? `<div class="e-actions"><button class="small ghost" data-action="edit-note" data-id="${n.id}">Edit</button><button class="small ghost danger" data-action="delete-note" data-id="${n.id}">Delete</button></div>` : ""}</div>`,
     )
     .join("");
   return `${canEdit(v) ? `<div class="toolbar"><button class="primary" data-action="add-note">+ Add note</button></div>` : ""}<div class="card">${list || '<div class="empty">No notes yet.</div>'}</div>`;

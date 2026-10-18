@@ -128,7 +128,7 @@ Each vehicle has a **Fuel** tab for fill-ups: date, odometer, gallons, and total
 
 ## Notes
 
-Each vehicle has a **Notes** tab for freeform dated notes: things like tire pressures, part numbers, or reminders to yourself. Notes are a simple dated list that the vehicle's owner and administrators can add to, edit, and delete, and each note shows who wrote it. The tab can be hidden in Settings, and notes are available over the REST API (`GET`/`POST /api/v1/vehicles/{id}/notes`) so scripts and AI assistants can read and write them.
+Each vehicle has a **Notes** tab for freeform dated notes: things like tire pressures, part numbers, or reminders to yourself. Web addresses in a note render as clickable links (http/https only, opened in a new tab). Notes are a simple dated list that the vehicle's owner and administrators can add to, edit, and delete, and each note shows who wrote it. The tab can be hidden in Settings, and notes are available over the REST API (`GET`/`POST /api/v1/vehicles/{id}/notes`) so scripts and AI assistants can read and write them.
 
 ## Receipt photos
 

@@ -1731,3 +1731,8 @@ footer {
   background: var(--muted, #888);
   color: #fff;
 }
+
+/* Links inside notes */
+.e-sub a {
+  color: var(--accent);
+}
