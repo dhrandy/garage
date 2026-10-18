@@ -63,7 +63,7 @@ _api_lock = threading.Lock()
 
 app = FastAPI(
     title="Garage",
-    version="0.2.7",
+    version="0.2.8",
     docs_url=None,
     openapi_url=None,
 )
