@@ -3343,3 +3343,87 @@ def test_towing_column_migrates_existing_database(tmp_path):
     main.init_db()
     with sqlite3.connect(main.DB_PATH) as conn:
         assert "towing" in {r[1] for r in conn.execute("PRAGMA table_info(fuel_entries)")}
+
+
+def test_log_service_advances_yearly_renewal(tmp_path):
+    main.DB_PATH = tmp_path / "yearly-reset.db"
+    main._login_failures.clear()
+    main._api_calls.clear()
+    main._api_failures.clear()
+    main.init_db()
+    with TestClient(main.app) as admin:
+        admin.post(
+            "/api/setup", json={"username": "admin-test", "password": "password-123"}
+        )
+
+        def add_reminder(name, due_date, repeats_yearly):
+            return admin.post(
+                "/api/reminders",
+                json={
+                    "vehicle_id": 1,
+                    "name": name,
+                    "due_date": due_date,
+                    "repeats_yearly": repeats_yearly,
+                    "last_date": "2026-01-01",
+                    "last_mileage": 0,
+                },
+            ).json()
+
+        def log(reminder_id, date, cost=42.5):
+            return admin.post(
+                "/api/services",
+                json={
+                    "vehicle_id": 1,
+                    "date": date,
+                    "mileage": 24000,
+                    "type": "Renewal",
+                    "cost": cost,
+                    "reminder_id": reminder_id,
+                },
+            )
+
+        def reminder(reminder_id):
+            rows = admin.get("/api/reminders?vehicle_id=1").json()
+            return next(r for r in rows if r["id"] == reminder_id)
+
+        # Logged inside the remind window: same month/day next year, alert clears.
+        reg = add_reminder("Registration Due", "2026-10-20", True)
+        assert log(reg["id"], "2026-10-18").status_code == 200
+        updated = reminder(reg["id"])
+        assert updated["due_date"] == "2027-10-20"
+        assert updated["last_date"] == "2026-10-18"
+        assert updated["repeats_yearly"] is True
+
+        # Editing the logged service re-applies without advancing again.
+        service = admin.get("/api/services?vehicle_id=1").json()[-1]
+        assert service["cost"] == 42.5
+        assert (
+            admin.put(
+                f"/api/services/{service['id']}",
+                json={
+                    "vehicle_id": 1,
+                    "date": "2026-10-18",
+                    "mileage": 24000,
+                    "type": "Renewal",
+                    "cost": 43,
+                    "reminder_id": reg["id"],
+                },
+            ).status_code
+            == 200
+        )
+        assert reminder(reg["id"])["due_date"] == "2027-10-20"
+
+        # Logged after this year's date passed: next year's occurrence, not +2.
+        insp = add_reminder("Inspection", "2026-09-30", True)
+        assert log(insp["id"], "2026-10-18").status_code == 200
+        assert reminder(insp["id"])["due_date"] == "2027-09-30"
+
+        # One-time renewal keeps its date; logging still records cost/details.
+        wty = add_reminder("Warranty", "2026-11-01", False)
+        assert log(wty["id"], "2026-10-18").status_code == 200
+        assert reminder(wty["id"])["due_date"] == "2026-11-01"
+
+        # Leap day clamps to Feb 28 in a non-leap target year.
+        leap = add_reminder("Leap renewal", "2024-02-29", True)
+        assert log(leap["id"], "2025-02-15").status_code == 200
+        assert reminder(leap["id"])["due_date"] == "2026-02-28"

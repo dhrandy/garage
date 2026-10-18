@@ -72,6 +72,20 @@ STORED_NAME_RE = re.compile(r"^[0-9a-f]{32}\.(?:jpg|png|webp|gif|heic)$")
 UPLOAD_CHUNK = 1024 * 1024
 
 
+def days_in_month(year: int, month: int) -> int:
+    """Days in a calendar month, February included."""
+    if month == 2:
+        leap = year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+        return 29 if leap else 28
+    return [31, 0, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]
+
+
+def next_yearly_due(due: date, service: date) -> date:
+    """Advance a yearly renewal to its month/day in the year after the service."""
+    year = service.year + 1
+    return date(year, due.month, min(due.day, days_in_month(year, due.month)))
+
+
 def iso_date(value: str | None) -> date | None:
     """Parse a stored YYYY-MM-DD date; return None for blank or malformed values."""
     if not value:
@@ -1263,6 +1277,16 @@ def apply_reminder_reset(
     )
     if not cur.rowcount:
         raise HTTPException(400, "Maintenance item not found for this vehicle")
+    row = c.execute(
+        "SELECT due_date,repeats_yearly FROM reminders WHERE id=?", (reminder_id,)
+    ).fetchone()
+    due = iso_date(row["due_date"]) if row else None
+    done = iso_date(service_date)
+    if due is not None and done is not None and row["repeats_yearly"]:
+        c.execute(
+            "UPDATE reminders SET due_date=?,updated_at=? WHERE id=?",
+            (next_yearly_due(due, done).isoformat(), now_iso(), reminder_id),
+        )
     return reminder_id
 
 
