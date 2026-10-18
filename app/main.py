@@ -263,6 +263,7 @@ def init_db():
           added_by INTEGER REFERENCES users(id),
           owner_id INTEGER REFERENCES users(id),
           private INTEGER NOT NULL DEFAULT 0,
+          archived INTEGER NOT NULL DEFAULT 0,
           fuel_type TEXT NOT NULL DEFAULT '',
           tire_size TEXT NOT NULL DEFAULT '',
           oil_spec TEXT NOT NULL DEFAULT '',
@@ -411,6 +412,10 @@ def init_db():
         if "private" not in vehicle_columns:
             c.execute(
                 "ALTER TABLE vehicles ADD COLUMN private INTEGER NOT NULL DEFAULT 0"
+            )
+        if "archived" not in vehicle_columns:
+            c.execute(
+                "ALTER TABLE vehicles ADD COLUMN archived INTEGER NOT NULL DEFAULT 0"
             )
         for col in ("fuel_type", "tire_size", "oil_spec"):
             if col not in vehicle_columns:
@@ -629,6 +634,18 @@ def require_vehicle_edit(row: sqlite3.Row, user: sqlite3.Row) -> None:
         raise HTTPException(
             403, "Only the owner or an administrator can edit this vehicle"
         )
+    if row["archived"]:
+        raise HTTPException(
+            409, "Vehicle is archived. Unarchive it to make changes."
+        )
+
+
+def require_vehicle_manage(row: sqlite3.Row, user: sqlite3.Row) -> None:
+    """Owner-or-admin check for operations allowed on archived vehicles."""
+    if not can_edit_vehicle(row, user):
+        raise HTTPException(
+            403, "Only the owner or an administrator can edit this vehicle"
+        )
 
 
 def visible_vehicle_ids(c: sqlite3.Connection, user: sqlite3.Row) -> set[int]:
@@ -812,6 +829,7 @@ SETTINGS_KEYS = (
     "hide_fuel",
     "hide_notes",
     "hide_due",
+    "hide_archived",
     "use_vehicle_photos",
     "use_kilometers",
 )
@@ -832,6 +850,7 @@ class SettingsIn(BaseModel):
     hide_fuel: bool | None = None
     hide_notes: bool | None = None
     hide_due: bool | None = None
+    hide_archived: bool | None = None
     use_vehicle_photos: bool | None = None
     use_kilometers: bool | None = None
 
@@ -1023,6 +1042,7 @@ def vehicle_dict(c, row):
         "owner_id": row["owner_id"],
         "owner": display_user(c, row["owner_id"]) or "System",
         "private": bool(row["private"]),
+        "archived": bool(row["archived"]),
         **header_specs(c, row["id"]),
         "mileage_updated_by": (
             lambda r: display_user(c, r["recorded_by"]) if r else ""
@@ -1117,6 +1137,30 @@ def update_vehicle(item_id: int, body: VehicleIn, request: Request):
         )
 
 
+def set_vehicle_archived(item_id: int, archived: bool, request: Request):
+    user = current_user(request)
+    with db() as c:
+        v = get_visible_vehicle(c, item_id, user)
+        require_vehicle_manage(v, user)
+        c.execute(
+            "UPDATE vehicles SET archived=?,updated_at=? WHERE id=?",
+            (int(archived), now_iso(), item_id),
+        )
+        return vehicle_dict(
+            c, c.execute("SELECT * FROM vehicles WHERE id=?", (item_id,)).fetchone()
+        )
+
+
+@app.post("/api/vehicles/{item_id}/archive")
+def archive_vehicle(item_id: int, request: Request):
+    return set_vehicle_archived(item_id, True, request)
+
+
+@app.post("/api/vehicles/{item_id}/unarchive")
+def unarchive_vehicle(item_id: int, request: Request):
+    return set_vehicle_archived(item_id, False, request)
+
+
 @app.post("/api/vehicles/{item_id}/photo", status_code=201)
 async def upload_vehicle_photo(
     item_id: int, request: Request, file: UploadFile = File(...)
@@ -1172,7 +1216,7 @@ def delete_vehicle(item_id: int, request: Request):
     user = current_user(request)
     with db() as c:
         v = get_visible_vehicle(c, item_id, user)
-        require_vehicle_edit(v, user)
+        require_vehicle_manage(v, user)
         service_ids = [
             r["id"]
             for r in c.execute("SELECT id FROM services WHERE vehicle_id=?", (item_id,))
@@ -2894,7 +2938,7 @@ def send_notification(urls: str, title: str, body: str) -> tuple[bool, str]:
 
 def due_maintenance_items(c) -> list[dict[str, Any]]:
     items = []
-    for v in c.execute("SELECT * FROM vehicles"):
+    for v in c.execute("SELECT * FROM vehicles WHERE archived=0"):
         mileage = effective_mileage(c, v)
         for r in c.execute("SELECT * FROM reminders WHERE vehicle_id=?", (v["id"],)):
             st = reminder_status(mileage, r)

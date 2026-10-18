@@ -1684,3 +1684,50 @@ footer {
 @media (max-width: 340px) {
   .tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+
+/* Archived vehicles */
+.archived-section {
+  margin-top: 22px;
+}
+.archived-section summary {
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 700;
+  padding: 6px 0;
+  list-style-position: inside;
+}
+.archived-section .due-count {
+  background: var(--muted, #888);
+}
+.archived-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.archived-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.archived-open {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.archived-name {
+  font-weight: 600;
+}
+.archived-pill {
+  background: var(--muted, #888);
+  color: #fff;
+}

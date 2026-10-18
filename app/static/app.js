@@ -47,8 +47,9 @@ const date = (s) =>
       })
     : "—";
 const today = () => new Date().toISOString().slice(0, 10);
-const canEdit = (v) =>
+const canManage = (v) =>
   !!state.user && (state.user.is_admin || v.owner_id === state.user.id);
+const canEdit = (v) => canManage(v) && !v.archived;
 function notify(msg) {
   toast.textContent = msg;
   toast.classList.add("show");
@@ -231,6 +232,7 @@ function reminderStatus(v, r) {
   };
 }
 function vehicleStatus(v) {
+  if (v.archived) return { state: "ok", label: "No reminders" };
   const rows = state.reminders
     .filter((r) => r.vehicle_id === v.id)
     .map((r) => ({ r, st: reminderStatus(v, r) }));
@@ -254,7 +256,7 @@ function vehicleStatus(v) {
 }
 function dueItems() {
   const out = [];
-  state.vehicles.forEach((v) => {
+  state.vehicles.filter((v) => !v.archived).forEach((v) => {
     state.reminders
       .filter((r) => r.vehicle_id === v.id)
       .forEach((r) => {
@@ -321,6 +323,16 @@ function dueSection(items) {
   if (!items.length || state.settings.hide_due) return "";
   return `<section class="due-section" id="dueList"><h2>Due <span class="due-count">${items.length}</span></h2><div class="due-list">${dueRows(items)}</div></section>`;
 }
+function archivedSection(rows) {
+  if (!rows.length || state.settings.hide_archived) return "";
+  const list = rows
+    .map(
+      (v) =>
+        `<div class="archived-row"><button class="archived-open" data-action="open" data-id="${v.id}"><span class="archived-name">${esc(v.name)}</span><span class="hint">${esc(v.year || "Year not set")} · ${dist(v.mileage)} ${unit()}</span></button>${canManage(v) ? `<button class="small" data-action="unarchive-vehicle" data-id="${v.id}">Unarchive</button>` : ""}</div>`,
+    )
+    .join("");
+  return `<details class="archived-section"><summary>Archived <span class="due-count">${rows.length}</span></summary><div class="archived-list">${list}</div></details>`;
+}
 function vicon(v) {
   return state.settings.use_vehicle_photos && v.photo_url
     ? `<div class="vc-icon"><img class="vc-photo" src="${v.photo_url}" alt=""></div>`
@@ -328,7 +340,9 @@ function vicon(v) {
 }
 function garage() {
   state.selected = null;
-  const cards = state.vehicles
+  const activeVehicles = state.vehicles.filter((v) => !v.archived),
+    archivedVehicles = state.vehicles.filter((v) => v.archived);
+  const cards = activeVehicles
     .map((v) => {
       const st = vehicleStatus(v),
         fuelRows = state.fuel.filter(
@@ -360,7 +374,7 @@ function garage() {
         .join("")}</div></div></button>`;
     })
     .join("");
-  app.innerHTML = `<h1>${esc(state.settings.garage_name)}</h1><p class="sub">${state.vehicles.length} vehicle${state.vehicles.length === 1 ? "" : "s"}</p>${state.user.is_admin ? `<div class="vehicle-view-toggle"><label class="check-row"><input type="checkbox" data-action="show-all-vehicles" ${state.user.show_all_vehicles ? "checked" : ""}><span>Show all vehicles</span></label><span class="hint">Include private vehicles owned by other users.</span></div>` : ""}${dueBar(dueItems())}<div class="grid">${cards || '<div class="empty">No vehicles visible.</div>'}</div>${dueSection(dueItems())}<div style="margin-top:18px"><button class="primary" data-action="add-vehicle">+ Add vehicle</button></div>`;
+  app.innerHTML = `<h1>${esc(state.settings.garage_name)}</h1><p class="sub">${activeVehicles.length} vehicle${activeVehicles.length === 1 ? "" : "s"}</p>${state.user.is_admin ? `<div class="vehicle-view-toggle"><label class="check-row"><input type="checkbox" data-action="show-all-vehicles" ${state.user.show_all_vehicles ? "checked" : ""}><span>Show all vehicles</span></label><span class="hint">Include private vehicles owned by other users.</span></div>` : ""}${dueBar(dueItems())}<div class="grid">${cards || '<div class="empty">No vehicles visible.</div>'}</div>${dueSection(dueItems())}${archivedSection(archivedVehicles)}<div style="margin-top:18px"><button class="primary" data-action="add-vehicle">+ Add vehicle</button></div>`;
 }
 function visibleTabs() {
   const h = state.settings || {};
@@ -392,7 +406,7 @@ function vehicle(v) {
       if (state.tab === "specs") render();
     });
   if (!tabs.some(([k]) => k === state.tab)) state.tab = (tabs[0] || ["log"])[0];
-  app.innerHTML = `<button class="back" data-action="garage">← Garage</button><div class="detail-head">${vicon(v)}<div><div class="detail-title">${esc(v.name)}</div><div class="detail-meta">${esc(v.year || "Year not set")} · ${v.private ? "Private · " : ""}${state.user.is_admin ? "Owner: " + esc(v.owner) + " · " : ""}${dist(v.mileage)} ${unit()}${v.mileage_updated_by ? ` · updated by ${esc(v.mileage_updated_by)}` : ""}${v.est_mileage > v.mileage ? ` · est. current ${dist(v.est_mileage)} ${unit()}` : ""} · added by ${esc(v.added_by)}</div></div><span class="pill"><span class="dot ${st.state}"></span>${st.label}</span><div class="spacer"></div>${canEdit(v) ? `<button class="small" data-action="mileage">Update mileage</button><button class="small" data-action="edit-vehicle">Edit</button>` : ""}</div>${
+  app.innerHTML = `<button class="back" data-action="garage">← Garage</button><div class="detail-head">${vicon(v)}<div><div class="detail-title">${esc(v.name)}</div><div class="detail-meta">${esc(v.year || "Year not set")} · ${v.private ? "Private · " : ""}${state.user.is_admin ? "Owner: " + esc(v.owner) + " · " : ""}${dist(v.mileage)} ${unit()}${v.mileage_updated_by ? ` · updated by ${esc(v.mileage_updated_by)}` : ""}${v.est_mileage > v.mileage ? ` · est. current ${dist(v.est_mileage)} ${unit()}` : ""} · added by ${esc(v.added_by)}</div></div><span class="pill"><span class="dot ${st.state}"></span>${st.label}</span><div class="spacer"></div>${v.archived ? `<span class="pill archived-pill">Archived</span>` : ""}${canManage(v) && v.archived ? `<button class="small" data-action="unarchive-vehicle" data-id="${v.id}">Unarchive</button>` : ""}${canEdit(v) ? `<button class="small" data-action="mileage">Update mileage</button><button class="small" data-action="edit-vehicle">Edit</button>` : ""}</div>${
     [
       v.fuel_type && ["Fuel", v.fuel_type],
       v.tire_size && ["Tires", v.tire_size],
@@ -777,7 +791,7 @@ function vehicleForm(
             )
             .join("")}</select></div>`
         : ""
-    }<div class="field"><label class="check-row"><input name="private" type="checkbox" ${v.private ? "checked" : ""}><span>Private vehicle</span></label><div class="hint">Only the owner and administrators can see a private vehicle.</div></div><div class="field"><label>Vehicle photo</label><input name="photo" type="file" accept="image/*" capture="environment"><div class="hint">Used as the card icon when vehicle photos are enabled in Settings.</div></div>${v.id && v.photo_url ? `<div class="field"><label>Current photo</label><div class="receipts"><span class="receipt"><a href="${v.photo_url}" target="_blank" rel="noopener"><img src="${v.photo_url}" alt="vehicle photo"></a><button type="button" class="small danger" data-action="delete-receipt" data-id="${v.photo_receipt_id}" aria-label="Delete photo">×</button></span></div></div>` : ""}${actions("", v.id ? `<button type="button" class="danger" data-action="delete-vehicle">Delete vehicle</button>` : "")}</form>`,
+    }<div class="field"><label class="check-row"><input name="private" type="checkbox" ${v.private ? "checked" : ""}><span>Private vehicle</span></label><div class="hint">Only the owner and administrators can see a private vehicle.</div></div><div class="field"><label>Vehicle photo</label><input name="photo" type="file" accept="image/*" capture="environment"><div class="hint">Used as the card icon when vehicle photos are enabled in Settings.</div></div>${v.id && v.photo_url ? `<div class="field"><label>Current photo</label><div class="receipts"><span class="receipt"><a href="${v.photo_url}" target="_blank" rel="noopener"><img src="${v.photo_url}" alt="vehicle photo"></a><button type="button" class="small danger" data-action="delete-receipt" data-id="${v.photo_receipt_id}" aria-label="Delete photo">×</button></span></div></div>` : ""}${actions("", v.id ? `<button type="button" class="small" data-action="archive-vehicle">Archive</button><button type="button" class="danger" data-action="delete-vehicle">Delete vehicle</button>` : "")}</form>`,
   );
   document.querySelector("#vehicleForm").onsubmit = async (e) => {
     e.preventDefault();
@@ -983,7 +997,7 @@ async function settingsView() {
     )
     .join("");
   const adminSettings = isAdmin
-    ? `<div class="card settings-card"><form id="settingsForm"><div class="field"><label>Garage name</label><input name="garage_name" required maxlength="80" value="${esc(s.garage_name)}"><div class="hint">Shown in the header and on the garage home screen.</div></div><h2>Vehicle page sections</h2><p class="hint">Hidden sections disappear from every vehicle page for all users.</p>${cb("hide_maintenance", "Hide Maintenance")}${cb("hide_fuel", "Hide Fuel")}${cb("hide_costs", "Hide Costs")}${cb("hide_notes", "Hide Notes")}<h2>Garage home screen</h2>${cb("hide_due", "Hide the due summary bar and list")}<h2>Vehicle photos</h2>${cb("use_vehicle_photos", "Use vehicle photos as card icons")}<h2>Distance units</h2>${cb("use_kilometers", "Use kilometers and L/100km")}<p class="hint">When off, vehicles show their emoji icon instead.</p><button class="primary">Save settings</button></form></div>`
+    ? `<div class="card settings-card"><form id="settingsForm"><div class="field"><label>Garage name</label><input name="garage_name" required maxlength="80" value="${esc(s.garage_name)}"><div class="hint">Shown in the header and on the garage home screen.</div></div><h2>Vehicle page sections</h2><p class="hint">Hidden sections disappear from every vehicle page for all users.</p>${cb("hide_maintenance", "Hide Maintenance")}${cb("hide_fuel", "Hide Fuel")}${cb("hide_costs", "Hide Costs")}${cb("hide_notes", "Hide Notes")}<h2>Garage home screen</h2>${cb("hide_due", "Hide the due summary bar and list")}${cb("hide_archived", "Hide the archived vehicles section")}<h2>Vehicle photos</h2>${cb("use_vehicle_photos", "Use vehicle photos as card icons")}<h2>Distance units</h2>${cb("use_kilometers", "Use kilometers and L/100km")}<p class="hint">When off, vehicles show their emoji icon instead.</p><button class="primary">Save settings</button></form></div>`
     : "";
   const notifications = isAdmin
     ? `<div class="card settings-card" style="margin-top:14px"><h2>Notifications</h2><p class="hint">Once a day Garage checks maintenance items against current or estimated mileage and dates, and sends one notification when an item newly becomes due soon or overdue. Add one or more Apprise URLs, one per line (discord://, tgram://, mailto://, ...). An http(s) URL receives a plain JSON webhook POST instead.</p><form id="notifyForm"><div class="field"><label>Apprise URLs</label><textarea name="apprise_urls" placeholder="tgram://bot_token/chat_id">${esc(notifySettings.apprise_urls)}</textarea></div><div class="modal-actions" style="margin-top:0"><button class="primary">Save</button><button type="button" class="small" data-action="test-notify">Send test notification</button></div></form></div>`
@@ -1000,6 +1014,7 @@ async function settingsView() {
         "hide_costs",
         "hide_notes",
         "hide_due",
+        "hide_archived",
         "use_vehicle_photos",
         "use_kilometers",
       ])
@@ -1116,6 +1131,23 @@ document.addEventListener("click", async (e) => {
       close();
       render();
     }
+  } else if (a === "archive-vehicle") {
+    if (
+      confirm(
+        "Archive this vehicle? It leaves the garage home screen and its reminders stop, but every entry is kept.",
+      )
+    ) {
+      await api(`/vehicles/${state.selected}/archive`, { method: "POST" });
+      await load();
+      close();
+      render();
+      notify("Vehicle archived");
+    }
+  } else if (a === "unarchive-vehicle") {
+    await api(`/vehicles/${id}/unarchive`, { method: "POST" });
+    await load();
+    render();
+    notify("Vehicle unarchived");
   } else if (a === "edit-specs")
     specsForm(state.vehicles.find((v) => v.id === state.selected));
   else if (a === "mileage") {

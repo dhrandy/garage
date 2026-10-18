@@ -144,6 +144,10 @@ Every vehicle has an owner, chosen when the vehicle is added; administrators can
 
 A vehicle marked **Private** is hidden even from administrators unless they turn on **Show all vehicles**. The flag works as an extra layer within the per-person visibility above; for non-administrators it only affects their own vehicles.
 
+## Archiving vehicles
+
+A vehicle you sold or no longer drive can be **archived** from its Edit form. An archived vehicle leaves the home grid, the due summary, and the averages, and its reminders stop notifying. Nothing is deleted: every service, fill-up, mod, note, and photo is kept, and the vehicle's page stays readable through the collapsed **Archived** section at the bottom of the home screen, where **Unarchive** brings it back. While archived, the vehicle is read-only - edits and new entries through the forms or the REST API are refused (`409`) until it is unarchived. Deleting an archived vehicle outright still works for the owner or an administrator. Settings has a **Hide the archived vehicles section** checkbox if you prefer not to see the section at all.
+
 ## Port
 
 The included Compose file maps host port `8917` to container port `8000`. Change the left side of this line to use another host port:
@@ -327,7 +331,7 @@ The browser uses a JSON REST API under `/api`. Authentication is cookie-based.
 
 - `GET /api/status`, `POST /api/setup`
 - `POST /api/login`, `POST /api/logout`, `GET /api/me`
-- `GET/POST /api/vehicles`, `PUT/DELETE /api/vehicles/{id}`, `POST /api/vehicles/{id}/photo` (multipart upload)
+- `GET/POST /api/vehicles`, `PUT/DELETE /api/vehicles/{id}`, `POST /api/vehicles/{id}/archive`, `POST /api/vehicles/{id}/unarchive`, `POST /api/vehicles/{id}/photo` (multipart upload)
 - `GET/POST /api/services`, `PUT/DELETE /api/services/{id}`
 - `GET/POST /api/fuel`, `PUT/DELETE /api/fuel/{id}`
 - `GET/POST /api/receipts`, `GET/DELETE /api/receipts/{id}` (multipart upload)
@@ -340,7 +344,7 @@ The browser uses a JSON REST API under `/api`. Authentication is cookie-based.
 - `GET/PUT /api/notifications`, `POST /api/notifications/test` (administrator only)
 - `/api/v1/...` token endpoints (see **REST API tokens**)
 
-Writes on a vehicle and its entries (`PUT/DELETE /api/vehicles/{id}`, `POST /api/vehicles/{id}/photo`, and the `POST`/`PUT`/`DELETE` routes for specs, services, fuel, receipts, reminders, notes, and mods) require the vehicle's owner or an administrator. Reads are limited the same way: a non-administrator only ever sees their own vehicles, and requests for any other vehicle return `404`.
+Archiving a vehicle makes it read-only: every write route on the vehicle and its entries answers `409` until `POST /api/vehicles/{id}/unarchive`. Writes on a vehicle and its entries (`PUT/DELETE /api/vehicles/{id}`, `POST /api/vehicles/{id}/photo`, and the `POST`/`PUT`/`DELETE` routes for specs, services, fuel, receipts, reminders, notes, and mods) require the vehicle's owner or an administrator. Reads are limited the same way: a non-administrator only ever sees their own vehicles, and requests for any other vehicle return `404`.
 
 ## Additional Mobile Screenshots
 
