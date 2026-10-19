@@ -202,6 +202,7 @@ Endpoints (all relative to `http://your-server:8917`):
 - `PUT /api/v1/vehicles/{id}/mileage` — update the odometer directly (JSON: `mileage`, optional `date`), same as the app's Update mileage button
 - `POST /api/v1/vehicles/{id}/services` — log a service entry (JSON; `date` is optional, and an undated service ignores `reminder_id`)
 - `POST /api/v1/vehicles/{id}/fuel` — log a fill-up (URL-encoded form without a receipt, or multipart form with optional receipt `file`; optional `towing=true`, default false)
+- `POST /api/receipts` — attach a receipt photo to an existing entry (multipart form: `kind` of `service` or `fuel`, `entry_id`, image `file`); accepts the same bearer token as the routes above and follows the same ownership and archive rules
 - `POST /api/v1/vehicles/{id}/notes` — add a note (JSON: `date`, `body`)
 - `POST /api/v1/vehicles/{id}/mods` — add a modification (JSON: `name`, optional `date`, `price`, `torque_specs`, `gotchas`, `youtube_url`)
 

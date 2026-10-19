@@ -63,7 +63,7 @@ _api_lock = threading.Lock()
 
 app = FastAPI(
     title="Garage",
-    version="0.2.9",
+    version="0.2.10",
     docs_url=None,
     openapi_url=None,
 )
@@ -1791,8 +1791,13 @@ async def upload_receipt(
     kind: str = Form(...),
     entry_id: int = Form(...),
     file: UploadFile = File(...),
+    _auth: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
 ):
-    user = current_user(request)
+    if request.headers.get("authorization"):
+        with db() as c:
+            user = token_user(c, token_auth(request))
+    else:
+        user = current_user(request)
     if kind not in ("service", "fuel"):
         raise HTTPException(400, "Receipts attach to service or fuel entries")
     mime = (file.content_type or "").lower()
