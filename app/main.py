@@ -63,7 +63,7 @@ _api_lock = threading.Lock()
 
 app = FastAPI(
     title="Garage",
-    version="0.2.10",
+    version="0.2.11",
     docs_url=None,
     openapi_url=None,
 )
@@ -1052,7 +1052,9 @@ def vehicle_dict(c, row):
             if row["photo_receipt_id"]
             else None
         ),
-        "added_by": display_user(c, row["added_by"]) or "System",
+        "added_by": display_user(c, row["added_by"])
+        or display_user(c, row["owner_id"])
+        or "System",
         "owner_id": row["owner_id"],
         "owner": display_user(c, row["owner_id"]) or "System",
         "private": bool(row["private"]),
@@ -1063,6 +1065,12 @@ def vehicle_dict(c, row):
         )(
             c.execute(
                 "SELECT recorded_by FROM mileage_updates WHERE vehicle_id=? ORDER BY id DESC LIMIT 1",
+                (row["id"],),
+            ).fetchone()
+        ),
+        "mileage_updated_at": (lambda r: r["recorded_at"] if r else "")(
+            c.execute(
+                "SELECT recorded_at FROM mileage_updates WHERE vehicle_id=? ORDER BY id DESC LIMIT 1",
                 (row["id"],),
             ).fetchone()
         ),

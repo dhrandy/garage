@@ -28,7 +28,7 @@ def test_shared_garage_and_permissions(tmp_path):
             "year": "1969",
             "mileage": 0,
             "icon": "🚗",
-            "added_by": "System",
+            "added_by": "admin-test",
         }
         assert (
             admin.post(
