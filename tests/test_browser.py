@@ -437,6 +437,10 @@ def test_due_summary_bar_list_and_card_line(app_url):
         browser = p.chromium.launch()
         for width, height in ((1280, 900), (390, 844)):
             page = browser.new_page(viewport={"width": width, "height": height})
+            from datetime import datetime
+
+            # Fixed clock at noon so day counts do not shift late in the day.
+            page.clock.set_fixed_time(datetime.combine(date.today(), datetime.min.time()).replace(hour=12))
             errors = []
             page.on("pageerror", lambda e: errors.append(str(e)))
             page.goto(app_url)
